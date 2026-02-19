@@ -5,5 +5,13 @@ build-std = ["core", "compiler_builtins", "alloc"]
 [build]
 target = "x86_64-chronos.json"
 
-[target.'cfg(target_os = "none")']
+# x86_64: use bootimage to build and run in QEMU
+# The runner command receives the binary path as an argument
+[target.x86_64-chronos.json]
 runner = "bootimage runner"
+
+# Optional: build for ARM (aarch64) or RISC-V (riscv64):
+#   cargo build -Z build-std --target aarch64-unknown-none
+#   cargo build -Z build-std --target riscv64gc-unknown-none-elf
+# Run with QEMU: qemu-system-aarch64 -machine virt -kernel target/aarch64-unknown-none/debug/chronos
+#               qemu-system-riscv64 -machine virt -kernel target/riscv64gc-unknown-none-elf/debug/chronos

@@ -5,24 +5,29 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-
-use bootloader::{BootInfo, entry_point};
-use chronos::println;
-use chronos::task::{Task, executor::Executor, shell};
-use chronos::thread::{self, Thread};
-use x86_64::VirtAddr;
 use core::panic::PanicInfo;
 
+// --- x86_64: full kernel with bootloader, heap, threads, shell ---
+#[cfg(target_arch = "x86_64")]
+use bootloader::{BootInfo, entry_point};
+#[cfg(target_arch = "x86_64")]
+use chronos::task::{Task, executor::Executor, shell};
+#[cfg(target_arch = "x86_64")]
+use chronos::thread::{self, Thread};
+#[cfg(target_arch = "x86_64")]
+use x86_64::VirtAddr;
+
+#[cfg(target_arch = "x86_64")]
 entry_point!(kernel_main);
 
-/// Idle thread: just halts until the next interrupt (timer will switch away).
+#[cfg(target_arch = "x86_64")]
 fn idle_entry() {
     loop {
         x86_64::instructions::hlt();
     }
 }
 
-/// Runs in a dedicated thread: the async executor (shell + heartbeat).
+#[cfg(target_arch = "x86_64")]
 fn executor_entry() {
     let mut executor = Executor::new();
     executor.spawn(Task::new(shell::run_shell()));
@@ -30,6 +35,7 @@ fn executor_entry() {
     executor.run();
 }
 
+#[cfg(target_arch = "x86_64")]
 async fn heartbeat() {
     use chronos::task::sleep::Sleep;
     loop {
@@ -38,6 +44,7 @@ async fn heartbeat() {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     chronos::init();
 
@@ -55,25 +62,32 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     memory::init_memory_map(&boot_info.memory_map);
 
-    // Spawn kernel threads: idle and executor (shell + async tasks).
     thread::SCHEDULER.lock().spawn(Thread::new(idle_entry));
     thread::SCHEDULER.lock().spawn(Thread::new(executor_entry));
 
-    println!("Chronos: threads + shell. Timer preempts round-robin.");
+    chronos::println!("Chronos: threads + shell. Timer preempts round-robin.");
     thread::enter_scheduler();
 }
 
-/// This function is called on panic.
-#[cfg(not(test))]
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    println!("{}", info);
+// --- ARM (aarch64) and RISC-V (riscv64): minimal entry (no bootloader, no heap/threads yet) ---
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[no_mangle]
+pub unsafe fn _start() -> ! {
+    chronos::init();
+    chronos::println!("Chronos (stub) on this arch. Halting.");
     chronos::hlt_loop();
 }
 
-/// This function is called on panic while testing.
+// --- Panic handlers (all arches) ---
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    chronos::println!("{}", info);
+    chronos::hlt_loop();
+}
+
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    chronos::test_panic_handler(info)
+    chronos::test_panic_handler(info);
 }

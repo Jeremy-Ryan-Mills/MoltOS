@@ -1,49 +1,75 @@
 //! Kernel crate root.
 //!
 //! This is the top-level entry point for the kernel as a Rust library crate.
-//! It wires up core subsystems (GDT/TSS, IDT/PIC, basic output), provides a
-//! simple custom test framework for `cargo test` in QEMU, and includes a few
-//! small utilities used across the kernel.
+//! It wires up core subsystems (GDT/TSS, IDT/PIC, basic output on x86_64),
+//! provides a simple custom test framework for `cargo test` in QEMU, and
+//! includes architecture-agnostic utilities. ARM (aarch64) and RISC-V (riscv64)
+//! are supported with stub implementations that can be filled in per arch.
 
 #![no_std]
 #![cfg_attr(test, no_main)]
 #![feature(custom_test_frameworks)]
-#![feature(abi_x86_interrupt)]
+#![cfg_attr(target_arch = "x86_64", feature(abi_x86_interrupt))]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 use bootloader::{entry_point, BootInfo};
 
 extern crate alloc;
 use core::panic::PanicInfo;
 
-pub mod gdt;
-pub mod interrupts;
-pub mod serial;
+pub mod arch;
 
-/// Number of PIT timer ticks since boot. Re-exported for convenience.
+#[cfg(target_arch = "x86_64")]
+pub mod gdt;
+#[cfg(target_arch = "x86_64")]
+pub mod interrupts;
+#[cfg(target_arch = "x86_64")]
+pub mod serial;
+#[cfg(not(target_arch = "x86_64"))]
+mod serial {
+    /// No-op for non-x86 so serial_print! / serial_println! compile.
+    #[doc(hidden)]
+    pub fn _print(_: core::fmt::Arguments) {}
+}
+
+/// Console print for non-x86 (delegates to serial stub).
+#[cfg(not(target_arch = "x86_64"))]
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => { $crate::serial::_print(core::fmt::format_args!($($arg)*)); };
+}
+/// Console println for non-x86.
+#[cfg(not(target_arch = "x86_64"))]
+#[macro_export]
+macro_rules! println {
+    () => { $crate::serial::_print(core::fmt::format_args!("\n")); };
+    ($($arg:tt)*) => { $crate::serial::_print(core::fmt::format_args!("{}\n", format_args!($($arg)*))); };
+}
+
+#[cfg(target_arch = "x86_64")]
 pub use interrupts::uptime_ticks;
+
+#[cfg(target_arch = "x86_64")]
 pub mod vga_buffer;
+#[cfg(target_arch = "x86_64")]
 pub mod memory;
+#[cfg(target_arch = "x86_64")]
 pub mod allocator;
+#[cfg(target_arch = "x86_64")]
 pub mod task;
+#[cfg(target_arch = "x86_64")]
 pub mod thread;
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 entry_point!(test_kernel_main);
 
 /// Trait implemented by things that can be run as tests.
-///
-/// We use this to print a test name before running it and mark `[ok]` on
-/// success. The test harness passes us a slice of `&dyn Testable`.
 pub trait Testable {
     fn run(&self) -> ();
 }
 
-/// Blanket impl so plain `fn()` tests can be used directly.
-///
-/// Any zero-arg function can be treated as a test.
 impl<T> Testable for T
 where
     T: Fn(),
@@ -55,50 +81,35 @@ where
     }
 }
 
-/// Exit codes understood by QEMU when using the `isa-debug-exit` device.
-///
-/// Writing these values to port `0xF4` allows tests to signal success/failure
-/// to the host without needing a full userspace or filesystem.
+/// Exit codes understood by QEMU (x86: isa-debug-exit; other arches: arch-specific).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum QemuExitCode {
-    /// Test run completed successfully.
     Success = 0x10,
-    /// At least one test failed (or a panic occurred).
     Failed = 0x11,
 }
 
-/// Exit QEMU with a specific status code.
-///
-/// This relies on QEMU being launched with the debug exit device enabled
-/// (commonly `-device isa-debug-exit,iobase=0xf4,iosize=0x04`).
+/// Exit QEMU with a specific status code (arch-specific implementation).
 pub fn exit_qemu(exit_code: QemuExitCode) {
-    use x86_64::instructions::port::Port;
-
-    unsafe {
-        let mut port = Port::new(0xf4);
-        port.write(exit_code as u32);
-    }
+    #[cfg(target_arch = "x86_64")]
+    arch::x86_64::exit_qemu(exit_code);
+    #[cfg(target_arch = "aarch64")]
+    arch::aarch64::exit_qemu(exit_code);
+    #[cfg(target_arch = "riscv64")]
+    arch::riscv64::exit_qemu(exit_code);
 }
 
-/// Initialize core CPU/kernel state needed for interrupts and basic runtime.
-///
-/// Order matters here:
-/// - Load GDT/TSS (needed for IST stacks like double fault)
-/// - Load IDT
-/// - Initialize the PICs (enable delivery of IRQs)
-/// - Enable CPU interrupts
+/// Initialize core CPU/kernel state (arch-specific).
 pub fn init() {
-    gdt::init();
-    interrupts::init_idt();
-    unsafe { interrupts::PICS.lock().initialize() };
-    x86_64::instructions::interrupts::enable();
+    #[cfg(target_arch = "x86_64")]
+    arch::x86_64::init();
+    #[cfg(target_arch = "aarch64")]
+    arch::aarch64::init();
+    #[cfg(target_arch = "riscv64")]
+    arch::riscv64::init();
 }
 
-
-/// Custom test runner used by the `custom_test_frameworks` feature.
-///
-/// Prints test count, executes tests, then exits QEMU with a success code.
+/// Custom test runner: prints test count, runs tests, exits QEMU.
 pub fn test_runner(tests: &[&dyn Testable]) {
     serial_println!("Running {} tests", tests.len());
     for test in tests {
@@ -108,9 +119,6 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 }
 
 /// Panic handler used during `cargo test`.
-///
-/// Prints the panic information over serial, exits QEMU with a failure code,
-/// and then halts the CPU.
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
@@ -118,29 +126,34 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
     hlt_loop();
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 fn test_kernel_main(_boot_info: &'static BootInfo) -> ! {
-    // like before
     init();
     test_main();
     hlt_loop();
 }
 
-/// Panic handler for test builds.
-///
-/// Delegates to [`test_panic_handler`].
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    test_panic_handler(info)
+    #[cfg(target_arch = "x86_64")]
+    {
+        test_panic_handler(info);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        serial_println!("[panic] {}", info);
+        exit_qemu(QemuExitCode::Failed);
+        hlt_loop();
+    }
 }
 
-/// Halt-loop used when there's nothing else to do.
-///
-/// `hlt` sleeps the CPU until the next interrupt, which is nicer than spinning
-/// at 100% in QEMU.
+/// Halt-loop: idle the CPU until the next interrupt (arch-specific).
 pub fn hlt_loop() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
+    #[cfg(target_arch = "x86_64")]
+    arch::x86_64::hlt_loop();
+    #[cfg(target_arch = "aarch64")]
+    arch::aarch64::hlt_loop();
+    #[cfg(target_arch = "riscv64")]
+    arch::riscv64::hlt_loop();
 }
