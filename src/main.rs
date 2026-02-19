@@ -16,8 +16,6 @@ use core::panic::PanicInfo;
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-
-    println!("Hello World{}", "!");
     chronos::init();
 
     use chronos::allocator;

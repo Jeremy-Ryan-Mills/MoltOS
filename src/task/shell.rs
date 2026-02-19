@@ -43,7 +43,12 @@ pub async fn run_shell() {
 
                     // Regular printable characters
                     DecodedKey::Unicode(c) => {
-                        if c.is_ascii() && !c.is_control() {
+                        // Backspace/DEL often come through as control chars
+                        if c == '\x08' || c == '\x7f' {
+                            if line.pop().is_some() {
+                                print!("\x08");
+                            }
+                        } else if c.is_ascii() && !c.is_control() {
                             line.push(c);
                             print!("{}", c);
                         }
@@ -52,14 +57,10 @@ pub async fn run_shell() {
                     // Non-character keys (arrows, backspace, etc.)
                     DecodedKey::RawKey(key) => {
                         use pc_keyboard::KeyCode;
-                        match key {
-                            KeyCode::Backspace => {
-                                if line.pop().is_some() {
-                                    // move left, overwrite with space, move left again
-                                    print!("\x08 \x08");
-                                }
+                        if let KeyCode::Backspace = key {
+                            if line.pop().is_some() {
+                                print!("\x08");
                             }
-                            _ => {}
                         }
                     }
                 }
