@@ -28,6 +28,7 @@ pub mod vga_buffer;
 pub mod memory;
 pub mod allocator;
 pub mod task;
+pub mod thread;
 
 #[cfg(test)]
 entry_point!(test_kernel_main);

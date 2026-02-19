@@ -111,11 +111,23 @@ pub fn uptime_ticks() -> u64 {
 
 /// Timer IRQ handler (PIT, IRQ0).
 ///
-/// Increments the tick count and sends an EOI to the PIC.
+/// Increments the tick count, may trigger a thread context switch, then sends EOI.
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
     TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    let switch = {
+        let mut sched = crate::thread::SCHEDULER.lock();
+        let current_tick = TICK_COUNT.load(Ordering::Relaxed);
+        sched.tick_prepare(current_tick)
+    };
+    if let Some((from_ctx, to_ctx)) = switch {
+        unsafe {
+            crate::thread::context::context_switch(from_ctx, to_ctx);
+        }
+    }
+
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());

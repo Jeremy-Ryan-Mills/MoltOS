@@ -5,17 +5,31 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-use alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
 
 use bootloader::{BootInfo, entry_point};
 use chronos::println;
 use chronos::task::{Task, executor::Executor, shell};
+use chronos::thread::{self, Thread};
 use x86_64::VirtAddr;
 use core::panic::PanicInfo;
 
 entry_point!(kernel_main);
 
-/// Demo task: prints every 200 timer ticks to show async Sleep working.
+/// Idle thread: just halts until the next interrupt (timer will switch away).
+fn idle_entry() {
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
+
+/// Runs in a dedicated thread: the async executor (shell + heartbeat).
+fn executor_entry() {
+    let mut executor = Executor::new();
+    executor.spawn(Task::new(shell::run_shell()));
+    executor.spawn(Task::new(heartbeat()));
+    executor.run();
+}
+
 async fn heartbeat() {
     use chronos::task::sleep::Sleep;
     loop {
@@ -41,18 +55,12 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     memory::init_memory_map(&boot_info.memory_map);
 
-    let mut executor = Executor::new();
-    executor.spawn(Task::new(shell::run_shell()));
-    // executor.spawn(Task::new(heartbeat()));
-    executor.run();
+    // Spawn kernel threads: idle and executor (shell + async tasks).
+    thread::SCHEDULER.lock().spawn(Thread::new(idle_entry));
+    thread::SCHEDULER.lock().spawn(Thread::new(executor_entry));
 
-
-    // For testing
-    #[cfg(test)]
-    test_main();
-
-    println!("It didnt crash yay");
-    chronos::hlt_loop();
+    println!("Chronos: threads + shell. Timer preempts round-robin.");
+    thread::enter_scheduler();
 }
 
 /// This function is called on panic.
