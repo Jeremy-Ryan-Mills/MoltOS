@@ -267,10 +267,26 @@ fn test_breakpoint_exception() {
 /// Test that the timer interrupt increments uptime (init already ran in test_kernel_main).
 #[test_case]
 fn test_uptime_increments() {
-    let t0 = crate::uptime_ticks();
-    for _ in 0..5_000_000 {
-        x86_64::instructions::hlt();
+    // Ensure interrupts are enabled
+    if !x86_64::instructions::interrupts::are_enabled() {
+        x86_64::instructions::interrupts::enable();
     }
+    
+    let t0 = crate::uptime_ticks();
+    // Wait for at least one timer interrupt to fire
+    // Timer fires at ~18.2 Hz (default) or 100 Hz (if configured), so this should complete quickly
+    let mut iterations = 0;
+    const MAX_ITERATIONS: u32 = 10_000_000; // Safety limit to prevent infinite loop
+    
+    // Wait until uptime increases (timer interrupt fired)
+    while crate::uptime_ticks() == t0 && iterations < MAX_ITERATIONS {
+        x86_64::instructions::hlt(); // Halt and wait for interrupt
+        iterations += 1;
+    }
+    
     let t1 = crate::uptime_ticks();
-    assert!(t1 > t0, "uptime should increase ({} -> {})", t0, t1);
+    assert!(t1 > t0, "uptime should increase ({} -> {}), iterations: {}", t0, t1, iterations);
+    assert!(iterations < MAX_ITERATIONS, 
+            "test timed out: uptime did not increase after {} iterations (interrupts may not be firing)", 
+            iterations);
 }

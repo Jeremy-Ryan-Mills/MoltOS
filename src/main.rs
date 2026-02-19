@@ -34,13 +34,7 @@ fn idle_entry() {
 
 /// Runs in a dedicated thread: takes the pre-created executor and runs it.
 fn executor_entry() {
-    chronos::serial_println!("[executor] Thread entry point reached");
-    println!("[executor] Thread started");
-    chronos::serial_println!("[executor] About to lock EXECUTOR");
     let mut executor = EXECUTOR.lock().take().expect("executor not initialized");
-    chronos::serial_println!("[executor] Got executor from static");
-    println!("[executor] Entering run loop");
-    chronos::serial_println!("[executor] Calling executor.run()");
     executor.run();
 }
 
@@ -77,24 +71,17 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Create executor and spawn tasks in bootstrap context (before any context switch).
     // This avoids allocation in the executor thread.
-    chronos::serial_println!("[kernel_main] Creating executor");
     let mut executor = Executor::new();
-    chronos::serial_println!("[kernel_main] Spawning shell task");
     executor.spawn(Task::new(shell::run_shell()));
-    chronos::serial_println!("[kernel_main] Spawning heartbeat task");
     executor.spawn(Task::new(heartbeat()));
-    chronos::serial_println!("[kernel_main] Storing executor in static");
     *EXECUTOR.lock() = Some(executor);
-    chronos::serial_println!("[kernel_main] Executor stored successfully");
 
     // Spawn executor thread - this is the only thread we need
     // The executor handles sleeping when idle, so we don't need a separate idle thread
-    chronos::serial_println!("[kernel_main] Spawning executor thread");
     thread::SCHEDULER.lock().spawn(Thread::new(executor_entry));
 
     println!("Chronos: threads + shell. Timer preempts round-robin.");
     println!("Scheduler has {} threads", thread::SCHEDULER.lock().len());
-    chronos::serial_println!("[kernel_main] About to enter scheduler");
     thread::enter_scheduler();
 }
 

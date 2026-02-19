@@ -47,21 +47,30 @@ impl Executor {
         } = self;
 
         while let Some(task_id) = task_queue.pop() {
+            crate::serial_println!("[executor] Polling task {}", task_id.as_u64());
             let task = match tasks.get_mut(&task_id) {
                 Some(task) => task,
-                None => continue, // task no longer exists
+                None => {
+                    crate::serial_println!("[executor] Task {} no longer exists", task_id.as_u64());
+                    continue; // task no longer exists
+                }
             };
             let waker = waker_cache
                 .entry(task_id)
                 .or_insert_with(|| TaskWaker::new(task_id, task_queue.clone()));
             let mut context = Context::from_waker(waker);
-            match task.poll(&mut context) {
+            crate::serial_println!("[executor] About to poll task {}", task_id.as_u64());
+            let poll_result = task.poll(&mut context);
+            crate::serial_println!("[executor] Task {} poll returned", task_id.as_u64());
+            match poll_result {
                 Poll::Ready(()) => {
+                    crate::serial_println!("[executor] Task {} completed", task_id.as_u64());
                     // task done -> remove it and its cached waker
                     tasks.remove(&task_id);
                     waker_cache.remove(&task_id);
                 }
                 Poll::Pending => {
+                    crate::serial_println!("[executor] Task {} returned Pending", task_id.as_u64());
                     // Task is waiting - it will be woken when ready
                 }
             }
@@ -71,7 +80,6 @@ impl Executor {
 
 impl Executor {
     pub fn run(&mut self) -> ! {
-        crate::println!("[executor] Starting run loop with {} tasks", self.tasks.len());
         loop {
             super::sleep::wake_sleepers();
             self.run_ready_tasks();
@@ -89,7 +97,6 @@ impl Executor {
         if self.task_queue.is_empty() {
             enable_and_hlt();
         }
-        // If queue is not empty, just continue (interrupts are already enabled)
     }
 }
 

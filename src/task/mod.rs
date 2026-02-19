@@ -40,7 +40,7 @@ impl TaskId {
         TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
     }
     
-    fn as_u64(self) -> u64 {
+    pub(crate) fn as_u64(self) -> u64 {
         self.0
     }
 }
