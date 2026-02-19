@@ -200,9 +200,10 @@ extern "x86-interrupt" fn timer_interrupt_handler(
 ///
 /// Reads a scancode from port `0x60`, feeds it into the `pc_keyboard` decoder,
 /// and prints either the decoded Unicode character or the raw key value.
+/// Also triggers a scheduler tick so threads can switch even without timer interrupts.
 /// Finally, sends an EOI to the PIC.
 extern "x86-interrupt" fn keyboard_interrupt_handler(
-    _stack_frame: InterruptStackFrame)
+    stack_frame: InterruptStackFrame)
 {
     use x86_64::instructions::port::Port;
 
@@ -210,9 +211,59 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     let scancode: u8 = unsafe { port.read() };
     crate::task::keyboard::add_scancode(scancode);
 
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    // Trigger scheduler tick so threads can switch even without PIT configured
+    // This allows the executor thread to get CPU time when keyboard input arrives
+    let switch = {
+        let mut sched = crate::thread::SCHEDULER.lock();
+        let current_tick = crate::uptime_ticks();
+        sched.tick_prepare(current_tick)
+    };
+
+    if let Some((from_ctx, to_ctx)) = switch {
+        // Save callee-saved regs (same as timer interrupt handler)
+        let saved_rbx: u64;
+        let saved_rbp: u64;
+        let saved_r12: u64;
+        let saved_r13: u64;
+        let saved_r14: u64;
+        let saved_r15: u64;
+        unsafe {
+            core::arch::asm!(
+                "mov {}, rbx",
+                "mov {}, rbp",
+                "mov {}, r12",
+                "mov {}, r13",
+                "mov {}, r14",
+                "mov {}, r15",
+                out(reg) saved_rbx,
+                out(reg) saved_rbp,
+                out(reg) saved_r12,
+                out(reg) saved_r13,
+                out(reg) saved_r14,
+                out(reg) saved_r15,
+            );
+        }
+        
+        unsafe {
+            // Write the interrupted thread's state into from_ctx, then load to_ctx
+            (*from_ctx).rsp = stack_frame.stack_pointer.as_u64();
+            (*from_ctx).rip = stack_frame.instruction_pointer.as_u64();
+            (*from_ctx).rbx = saved_rbx;
+            (*from_ctx).rbp = saved_rbp;
+            (*from_ctx).r12 = saved_r12;
+            (*from_ctx).r13 = saved_r13;
+            (*from_ctx).r14 = saved_r14;
+            (*from_ctx).r15 = saved_r15;
+            // EOI before switching
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+            crate::thread::context::context_switch_to(to_ctx);
+        }
+        // If we switched, we never return here
+    } else {
+        unsafe {
+            PICS.lock()
+                .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        }
     }
 }
 

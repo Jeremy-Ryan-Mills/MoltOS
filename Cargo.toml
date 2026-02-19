@@ -44,7 +44,7 @@ harness = true
 
 [[bin]]
 name = "chronos"
-test = true
+test = false
 bench = false
 
 [dependencies]

@@ -17,17 +17,18 @@ pub use thread::{Thread, ThreadId};
 /// bootstrap (current execution) to the first thread. Call after spawning
 /// at least one thread.
 pub fn enter_scheduler() -> ! {
-    crate::serial_println!("[enter_scheduler] Starting scheduler loop");
+    // First, ensure we switch from bootstrap to the first thread
+    // This should always succeed if there's at least one thread
+    let mut first_switch_done = false;
+    
     loop {
         let switch = {
             let mut sched = SCHEDULER.lock();
             let current_tick = crate::uptime_ticks();
-            let result = sched.tick_prepare(current_tick);
-            crate::serial_println!("[enter_scheduler] tick_prepare returned {} threads, tick={}", sched.len(), current_tick);
-            result
+            sched.tick_prepare(current_tick)
         };
         if let Some((from_ctx, to_ctx)) = switch {
-            crate::serial_println!("[enter_scheduler] About to context switch");
+            first_switch_done = true;
             unsafe {
                 // Safety checks: ensure pointers are valid and thread has a valid stack.
                 if to_ctx.is_null() {
@@ -44,9 +45,16 @@ pub fn enter_scheduler() -> ! {
                 crate::serial_println!("[scheduler] Returned from context_switch (unexpected!)");
             }
         } else {
-            // No threads to switch to - halt and wait for timer interrupt
-            x86_64::instructions::interrupts::enable();
-            x86_64::instructions::hlt();
+            // No switch needed - this can happen if scheduler decides not to switch
+            // On first call, this shouldn't happen (we should switch from bootstrap)
+            if !first_switch_done {
+                crate::serial_println!("ERROR: tick_prepare returned None on first call - no threads?");
+                crate::hlt_loop();
+            }
+            // Without PIT, we need keyboard interrupts to trigger switches, so use enable_and_hlt
+            // to allow keyboard interrupts to wake us
+            use x86_64::instructions::interrupts::enable_and_hlt;
+            enable_and_hlt();
         }
     }
 }

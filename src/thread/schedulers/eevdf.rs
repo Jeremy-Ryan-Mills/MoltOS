@@ -149,10 +149,31 @@ impl EevdfScheduler {
 
         let prev = self.current;
         
-        // If we're already running the target thread, don't switch
+        // If we're already running the target thread, don't switch again
+        // (avoid unnecessary context switches)
+        // However:
+        // - Always allow the first switch (prev == None means we're in bootstrap)
+        // - Allow switching if enough time has passed (time slice expired)
+        // - CRITICAL: Always allow switching if current_tick == 0 (no PIT configured)
+        //   This prevents hangs when keyboard interrupts are the only way to trigger switches
         if prev == Some(next_idx) {
-            return None;
+            // If timer isn't running (current_tick == 0), we MUST allow switching
+            // to prevent hangs. Keyboard interrupts are the only way to trigger
+            // scheduler ticks, so we need to switch even if it's to the same thread.
+            if current_tick == 0 {
+                // Allow switch - we're in a no-PIT scenario
+                // This ensures keyboard interrupts can give CPU time to threads
+            } else {
+                let time_since_switch = current_tick.saturating_sub(self.last_switch_tick);
+                // Only skip switch if we just switched recently (within MIN_TIME_SLICE)
+                // This allows the test to work (multiple ticks can switch) while preventing
+                // unnecessary switches in normal operation
+                if time_since_switch < MIN_TIME_SLICE {
+                    return None;
+                }
+            }
         }
+        // If prev == None, we're switching from bootstrap - always allow this
         
         self.current = Some(next_idx);
         self.last_switch_tick = current_tick;

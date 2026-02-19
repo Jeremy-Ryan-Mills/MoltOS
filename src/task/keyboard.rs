@@ -48,20 +48,21 @@ impl Stream for ScancodeStream {
             .try_get()
             .expect("not initialized");
         
+        // Always re-register the waker first, in case we were switched away
+        // and the previous waker is stale. This ensures keyboard interrupts
+        // can wake us even after context switches.
+        WAKER.register(cx.waker());
+        
+        // Check for scancodes after registering waker
+        // (scancodes might have arrived while we were switched away)
         if let Some(scancode) = queue.pop() {
+            // Found a scancode - we don't need to take the waker since we got data
             return Poll::Ready(Some(scancode));
         }
 
-        WAKER.register(cx.waker());
-        match queue.pop() {
-            Some(scancode) => {
-                WAKER.take();
-                Poll::Ready(Some(scancode))
-            }
-            None => {
-                Poll::Pending
-            }
-        }
+        // Queue is empty - return Pending
+        // The waker is already registered, so keyboard interrupts will wake us
+        Poll::Pending
     }
 }
 
