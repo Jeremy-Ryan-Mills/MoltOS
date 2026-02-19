@@ -9,20 +9,11 @@ use alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
 
 use bootloader::{BootInfo, entry_point};
 use chronos::println;
-use chronos::task::{Task, keyboard, executor::Executor};
+use chronos::task::{Task, executor::Executor, shell};
 use x86_64::VirtAddr;
 use core::panic::PanicInfo;
 
 entry_point!(kernel_main);
-
-async fn async_number() -> u32 {
-    42
-}
-
-async fn example_task() {
-    let number = async_number().await;
-    println!("number: {}", number);
-}
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
@@ -43,8 +34,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
 
     let mut executor = Executor::new();
-    executor.spawn(Task::new(example_task()));
-    executor.spawn(Task::new(keyboard::print_keypresses())); // new
+    executor.spawn(Task::new(shell::run_shell()));
     executor.run();
 
 

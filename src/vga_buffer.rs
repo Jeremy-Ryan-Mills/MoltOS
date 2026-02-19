@@ -54,6 +54,15 @@ pub fn _print(args: fmt::Arguments) {
     });
 }
 
+/// Clears the VGA text buffer and moves the cursor to the top-left.
+pub fn clear_screen() {
+    use x86_64::instructions::interrupts;
+
+    interrupts::without_interrupts(|| {
+        WRITER.lock().clear_screen();
+    });
+}
+
 /// VGA color values.
 ///
 /// These correspond to the standard VGA text-mode color palette.
@@ -136,6 +145,7 @@ impl Writer {
     pub fn write_byte(&mut self, byte: u8) {
         match byte {
             b'\n' => self.new_line(),
+            b'\x08' => self.backspace(),
             byte => {
                 if self.column_position >= BUFFER_WIDTH {
                     self.new_line();
@@ -151,6 +161,27 @@ impl Writer {
                 self.column_position += 1;
             }
         }
+    }
+
+    /// Moves the cursor back one column and erases the character there.
+    fn backspace(&mut self) {
+        if self.column_position > 0 {
+            self.column_position -= 1;
+            let row = BUFFER_HEIGHT - 1;
+            let col = self.column_position;
+            self.buffer.chars[row][col].write(ScreenChar {
+                ascii_character: b' ',
+                color_code: self.color_code,
+            });
+        }
+    }
+
+    /// Clears the entire screen and moves the cursor to the top-left.
+    pub fn clear_screen(&mut self) {
+        for row in 0..BUFFER_HEIGHT {
+            self.clear_row(row);
+        }
+        self.column_position = 0;
     }
 
     /// Advances the buffer to a new line, scrolling the screen if necessary.
@@ -184,7 +215,7 @@ impl Writer {
     pub fn write_string(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
-                0x20..=0x7e | b'\n' => self.write_byte(byte),
+                0x20..=0x7e | b'\n' | b'\x08' => self.write_byte(byte),
                 _ => self.write_byte(0xfe),
             }
         }

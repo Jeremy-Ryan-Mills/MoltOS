@@ -12,7 +12,6 @@ use spin;
 
 use crate::gdt;
 use crate::println;
-use crate::print;
 use crate::hlt_loop;
 
 /// Offset where PIC1 vectors start in the IDT.
@@ -103,13 +102,10 @@ pub fn init_idt() {
 
 /// Timer IRQ handler (PIT, IRQ0).
 ///
-/// Prints a dot so you can visually confirm interrupts are firing, then sends
-/// an EOI (end-of-interrupt) to the PIC so it can deliver further IRQs.
+/// Sends an EOI (end-of-interrupt) to the PIC so it can deliver further IRQs.
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
-    print!(".");
-
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());

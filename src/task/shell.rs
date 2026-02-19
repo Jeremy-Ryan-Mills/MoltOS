@@ -1,0 +1,101 @@
+//! Simple terminal / command loop.
+//!
+//! Reads keyboard input line-by-line, parses the first token as a command,
+//! and runs built-in commands (help, clear, echo).
+
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::str;
+use futures_util::StreamExt;
+use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+
+use crate::print;
+use crate::println;
+use crate::vga_buffer;
+use super::keyboard::ScancodeStream;
+
+const PROMPT: &str = "chronos> ";
+
+/// Runs the shell loop: prompt, read line, execute command, repeat.
+pub async fn run_shell() {
+    let mut scancodes = ScancodeStream::new();
+    let mut keyboard = Keyboard::new(
+        ScancodeSet1::new(),
+        layouts::Us104Key,
+        HandleControl::Ignore,
+    );
+    let mut line = String::new();
+
+    println!("Chronos shell. Type 'help' for commands.");
+    print!("{}", PROMPT);
+
+    while let Some(scancode) = scancodes.next().await {
+        if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+            if let Some(key) = keyboard.process_keyevent(key_event) {
+                match key {
+                    // ENTER: handled here (decoded)
+                    DecodedKey::Unicode('\r') | DecodedKey::Unicode('\n') => {
+                        println!();
+                        run_command(line.trim());
+                        line.clear();
+                        print!("{}", PROMPT);
+                    }
+
+                    // Regular printable characters
+                    DecodedKey::Unicode(c) => {
+                        if c.is_ascii() && !c.is_control() {
+                            line.push(c);
+                            print!("{}", c);
+                        }
+                    }
+
+                    // Non-character keys (arrows, backspace, etc.)
+                    DecodedKey::RawKey(key) => {
+                        use pc_keyboard::KeyCode;
+                        match key {
+                            KeyCode::Backspace => {
+                                if line.pop().is_some() {
+                                    // move left, overwrite with space, move left again
+                                    print!("\x08 \x08");
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Parse the line and dispatch to a built-in command.
+fn run_command(line: &str) {
+    if line.is_empty() {
+        return;
+    }
+
+    let mut parts = line.split_ascii_whitespace();
+    let cmd = parts.next().unwrap_or("");
+    let rest: String = parts.collect::<Vec<_>>().join(" ");
+
+    match cmd {
+        "help" => cmd_help(),
+        "clear" | "cls" => cmd_clear(),
+        "echo" => cmd_echo(rest.trim()),
+        _ => println!("unknown command: '{}'. Type 'help' for commands.", cmd),
+    }
+}
+
+fn cmd_help() {
+    println!("  help       - show this message");
+    println!("  clear/cls  - clear the screen");
+    println!("  echo ...   - print the rest of the line");
+}
+
+fn cmd_clear() {
+    vga_buffer::clear_screen();
+}
+
+fn cmd_echo(args: &str) {
+    println!("{}", args);
+}
