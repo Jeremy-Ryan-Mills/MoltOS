@@ -1,6 +1,9 @@
 use conquer_once::spin::OnceCell;
 use x86_64::{
-    structures::paging::{Page, PhysFrame, Mapper, Size4KiB, FrameAllocator, PageTable, OffsetPageTable},
+    structures::paging::{
+        mapper::MapToError, Page, PhysFrame, Mapper, Size4KiB, FrameAllocator, PageTable,
+        OffsetPageTable,
+    },
     VirtAddr,
     PhysAddr,
 };
@@ -133,6 +136,31 @@ pub fn create_example_mapping(
         mapper.map_to(page, frame, flags, frame_allocator)
     };
     map_to_result.expect("map_to failed").flush();
+}
+
+/// Identity-map the VGA text buffer so virtual address `0xb8000` is valid.
+///
+/// The VGA driver uses `0xb8000` as a virtual address; the bootloader may only
+/// map physical memory at a high offset, so we add this mapping explicitly.
+/// If the bootloader already identity-mapped this page, we treat that as success.
+pub fn map_vga_buffer(
+    mapper: &mut OffsetPageTable,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+) {
+    use x86_64::structures::paging::PageTableFlags as Flags;
+
+    let page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xb8000));
+    let frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(0xb8000));
+    let flags = Flags::PRESENT | Flags::WRITABLE;
+
+    let result = unsafe { mapper.map_to(page, frame, flags, frame_allocator) };
+    match result {
+        Ok(flush) => flush.flush(),
+        Err(MapToError::PageAlreadyMapped(_)) => {
+            // Bootloader already identity-mapped 0xb8000; nothing to do.
+        }
+        Err(e) => panic!("VGA map_to failed: {:?}", e),
+    }
 }
 
 /// Translates the given virtual address to the mapped physical address, or

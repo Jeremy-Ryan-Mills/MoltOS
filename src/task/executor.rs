@@ -61,7 +61,9 @@ impl Executor {
                     tasks.remove(&task_id);
                     waker_cache.remove(&task_id);
                 }
-                Poll::Pending => {}
+                Poll::Pending => {
+                    // Task is waiting - it will be woken when ready
+                }
             }
         }
     }
@@ -69,6 +71,7 @@ impl Executor {
 
 impl Executor {
     pub fn run(&mut self) -> ! {
+        crate::println!("[executor] Starting run loop with {} tasks", self.tasks.len());
         loop {
             super::sleep::wake_sleepers();
             self.run_ready_tasks();
@@ -77,14 +80,16 @@ impl Executor {
     }
 
     fn sleep_if_idle(&self) {
-        use x86_64::instructions::interrupts::{self, enable_and_hlt};
+        use x86_64::instructions::interrupts::enable_and_hlt;
 
-        interrupts::disable();
+        // If queue is empty, halt and wait for interrupts (timer or keyboard).
+        // Tasks that are Pending will be woken by their wakers when ready.
+        // enable_and_hlt atomically enables interrupts and halts, so keyboard
+        // interrupts can wake us immediately.
         if self.task_queue.is_empty() {
             enable_and_hlt();
-        } else {
-            interrupts::enable();
         }
+        // If queue is not empty, just continue (interrupts are already enabled)
     }
 }
 

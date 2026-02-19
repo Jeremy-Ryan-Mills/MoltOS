@@ -13,11 +13,11 @@ pub mod sleep;
 
 pub struct Task {
     id: TaskId,
-    future: Pin<Box<dyn Future<Output = ()>>>,
+    future: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl Task {
-    pub fn new(future: impl Future<Output = ()> + 'static) -> Task {
+    pub fn new(future: impl Future<Output = ()> + Send + 'static) -> Task {
         Task {
             id: TaskId::new(),
             future: Box::pin(future),
@@ -38,5 +38,9 @@ impl TaskId {
     fn new() -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
+    
+    fn as_u64(self) -> u64 {
+        self.0
     }
 }

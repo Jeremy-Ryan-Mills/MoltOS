@@ -94,6 +94,28 @@ impl InterruptIndex {
     }
 }
 
+/// Configure the PIT (Programmable Interval Timer) to fire at the specified frequency.
+///
+/// The PIT runs at 1.193182 MHz. To get `frequency` Hz, we use divisor = 1193182 / frequency.
+/// Common frequencies:
+/// - 18.2 Hz: default (divisor 65536)
+/// - 100 Hz: responsive (divisor 11932)
+/// - 1000 Hz: very responsive (divisor 1193)
+pub unsafe fn configure_pit(frequency: u32) {
+    use x86_64::instructions::port::Port;
+    
+    let divisor = (1193182u32 / frequency) as u16;
+    
+    // Channel 0, mode 2 (rate generator), 16-bit binary
+    let mut command_port = Port::new(0x43);
+    command_port.write(0x34u8); // Channel 0, access mode: low byte then high byte, mode 2, binary
+    
+    // Write divisor (low byte, then high byte)
+    let mut data_port = Port::new(0x40);
+    data_port.write((divisor & 0xFF) as u8);
+    data_port.write((divisor >> 8) as u8);
+}
+
 /// Load the IDT into the CPU.
 ///
 /// Call this during early boot after the GDT/TSS is set up.
@@ -112,9 +134,36 @@ pub fn uptime_ticks() -> u64 {
 /// Timer IRQ handler (PIT, IRQ0).
 ///
 /// Increments the tick count, may trigger a thread context switch, then sends EOI.
+/// When switching, we save the *interrupted* thread's state (from the stack frame
+/// and callee-saved regs) into its context, then switch to the new thread. We must
+/// not save the handler's own rsp/rip or we would corrupt the thread's context.
 extern "x86-interrupt" fn timer_interrupt_handler(
-    _stack_frame: InterruptStackFrame)
+    stack_frame: InterruptStackFrame)
 {
+    // Save callee-saved regs immediately; they still hold the interrupted thread's values.
+    let saved_rbx: u64;
+    let saved_rbp: u64;
+    let saved_r12: u64;
+    let saved_r13: u64;
+    let saved_r14: u64;
+    let saved_r15: u64;
+    unsafe {
+        core::arch::asm!(
+            "mov {}, rbx",
+            "mov {}, rbp",
+            "mov {}, r12",
+            "mov {}, r13",
+            "mov {}, r14",
+            "mov {}, r15",
+            out(reg) saved_rbx,
+            out(reg) saved_rbp,
+            out(reg) saved_r12,
+            out(reg) saved_r13,
+            out(reg) saved_r14,
+            out(reg) saved_r15,
+        );
+    }
+
     TICK_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let switch = {
@@ -122,15 +171,28 @@ extern "x86-interrupt" fn timer_interrupt_handler(
         let current_tick = TICK_COUNT.load(Ordering::Relaxed);
         sched.tick_prepare(current_tick)
     };
+
     if let Some((from_ctx, to_ctx)) = switch {
         unsafe {
-            crate::thread::context::context_switch(from_ctx, to_ctx);
+            // Write the *interrupted* thread's state into from_ctx, then load to_ctx.
+            (*from_ctx).rsp = stack_frame.stack_pointer.as_u64();
+            (*from_ctx).rip = stack_frame.instruction_pointer.as_u64();
+            (*from_ctx).rbx = saved_rbx;
+            (*from_ctx).rbp = saved_rbp;
+            (*from_ctx).r12 = saved_r12;
+            (*from_ctx).r13 = saved_r13;
+            (*from_ctx).r14 = saved_r14;
+            (*from_ctx).r15 = saved_r15;
+            // EOI before switching so the interrupt is acknowledged; we won't return.
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+            crate::thread::context::context_switch_to(to_ctx);
         }
-    }
-
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        // If we switched, we never return here (we're in another thread now).
+    } else {
+        unsafe {
+            PICS.lock()
+                .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        }
     }
 }
 
@@ -170,10 +232,11 @@ extern "x86-interrupt" fn page_fault_handler(
 ) {
     use x86_64::registers::control::Cr2;
 
-    println!("EXCEPTION: PAGE FAULT");
-    println!("Accessed Address: {:?}", Cr2::read());
-    println!("Error Code: {:?}", error_code);
-    println!("{:#?}", stack_frame);
+    // Use serial output instead of VGA to avoid double fault if VGA isn't mapped.
+    crate::serial_println!("EXCEPTION: PAGE FAULT");
+    crate::serial_println!("Accessed Address: {:?}", Cr2::read());
+    crate::serial_println!("Error Code: {:?}", error_code);
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
     hlt_loop();
 }
 
@@ -181,12 +244,15 @@ extern "x86-interrupt" fn page_fault_handler(
 ///
 /// A double fault usually indicates a serious kernel bug (e.g., stack overflow,
 /// invalid IDT/GDT/TSS setup, or an exception while handling another exception).
-/// We panic here so you get a message instead of silently resetting.
+/// Use serial output to avoid further faults if VGA isn't accessible.
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
     _error_code: u64,
 ) -> ! {
-    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    crate::serial_println!("EXCEPTION: DOUBLE FAULT");
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
+    crate::serial_println!("Halting...");
+    hlt_loop();
 }
 
 /// Smoke test: trigger a breakpoint exception.

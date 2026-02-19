@@ -86,12 +86,26 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
 /// Order matters here:
 /// - Load GDT/TSS (needed for IST stacks like double fault)
 /// - Load IDT
-/// - Initialize the PICs (enable delivery of IRQs)
+/// - Configure PIT timer to run at 100 Hz for responsive scheduling
+/// - Initialize the PICs (remap IRQs)
+/// - Unmask keyboard IRQ (IRQ1) so keyboard interrupts are delivered
 /// - Enable CPU interrupts
 pub fn init() {
     gdt::init();
     interrupts::init_idt();
-    unsafe { interrupts::PICS.lock().initialize() };
+    unsafe {
+        let mut pics = interrupts::PICS.lock();
+        pics.initialize();
+        // Configure PIT to run at 100 Hz for responsive thread switching
+        // Do this AFTER PIC init so PIC doesn't reset it
+        // Temporarily disabled to debug black screen
+        // interrupts::configure_pit(100);
+        // Unmask IRQ1 (keyboard) - by default all IRQs except IRQ0 are masked
+        // IRQ1 is bit 1 in PIC1's mask (bit 0 = IRQ0, bit 1 = IRQ1)
+        let [mut mask1, mask2] = pics.read_masks();
+        mask1 &= !(1 << 1); // Clear bit 1 for IRQ1 (keyboard)
+        pics.write_masks(mask1, mask2);
+    }
     x86_64::instructions::interrupts::enable();
 }
 

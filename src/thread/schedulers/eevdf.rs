@@ -13,6 +13,7 @@ use super::super::thread::Thread;
 const DEFAULT_WEIGHT: u64 = 1024;
 
 /// Minimum time slice in timer ticks before we consider switching.
+/// With 100 Hz timer, 1 tick = 10ms, which is responsive enough.
 const MIN_TIME_SLICE: u64 = 1;
 
 /// Thread scheduling metadata for EEVDF.
@@ -147,6 +148,12 @@ impl EevdfScheduler {
             .unwrap_or(0); // Fallback to first thread if none eligible
 
         let prev = self.current;
+        
+        // If we're already running the target thread, don't switch
+        if prev == Some(next_idx) {
+            return None;
+        }
+        
         self.current = Some(next_idx);
         self.last_switch_tick = current_tick;
 

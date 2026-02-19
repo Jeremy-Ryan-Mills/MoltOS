@@ -8,16 +8,21 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
 static WAKER: AtomicWaker = AtomicWaker::new();
 
+/// Initialize the scancode queue. Call once from kernel_main after heap init so
+/// keyboard interrupts can enqueue scancodes before the shell task runs.
+pub fn init_scancode_queue() {
+    let _ = SCANCODE_QUEUE.try_init_once(|| ArrayQueue::new(100));
+}
+
 pub(crate) fn add_scancode(scancode: u8) {
     if let Ok(queue) = SCANCODE_QUEUE.try_get() {
         if let Err(_) = queue.push(scancode) {
-            println!("WARNING: scancode queue full; dropping keyboard input");
+            // Queue full - drop the scancode
         } else {
             WAKER.wake();
         }
-    } else {
-        println!("WARNING: scancode queue uninitialized");
     }
+    // If queue not initialized, silently drop (shell hasn't started yet)
 }
 
 pub struct ScancodeStream {
@@ -26,8 +31,11 @@ pub struct ScancodeStream {
 
 impl ScancodeStream {
     pub fn new() -> Self {
-        SCANCODE_QUEUE.try_init_once(|| ArrayQueue::new(100))
-            .expect("ScancodeStream::new should only be called once");
+        // Use queue if already inited (e.g. by init_scancode_queue); otherwise init now.
+        if SCANCODE_QUEUE.try_get().is_err() {
+            SCANCODE_QUEUE.try_init_once(|| ArrayQueue::new(100))
+                .expect("ScancodeStream::new failed to init queue");
+        }
         ScancodeStream { _private: () }
     }
 }

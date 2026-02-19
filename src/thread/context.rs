@@ -23,7 +23,8 @@ pub struct ThreadContext {
 /// jumps to the new context's instruction pointer.
 ///
 /// When it "returns", we're in the new context (so we don't return in the
-/// normal sense when switching away).
+/// normal sense when switching away). Enables interrupts (sti) so the new
+/// thread receives timer/keyboard IRQs.
 ///
 /// # Safety
 /// - `old` must be valid to write the current context to.
@@ -48,10 +49,36 @@ pub unsafe fn context_switch(old: *mut ThreadContext, new: *const ThreadContext)
         "mov r13, [rsi + 40]",
         "mov r14, [rsi + 48]",
         "mov r15, [rsi + 56]",
+        "sti",
         "ret",
         in("rdi") old,
         in("rsi") new,
-        options(nostack, preserves_flags)
+        options(nostack)
+    );
+}
+
+/// Restores context from `new` and jumps to that context's instruction pointer.
+/// Does *not* save the current context (use when switching from interrupt context
+/// after having already written the interrupted thread's state into its context).
+/// Enables interrupts (sti) so the new thread receives timer/keyboard IRQs.
+///
+/// # Safety
+/// - `new` must be valid and contain a context previously saved by
+///   `context_switch` or set up for initial thread entry.
+#[inline(never)]
+pub unsafe fn context_switch_to(new: *const ThreadContext) {
+    asm!(
+        "mov rsp, [rdi + 0]",
+        "mov rbx, [rdi + 16]",
+        "mov rbp, [rdi + 24]",
+        "mov r12, [rdi + 32]",
+        "mov r13, [rdi + 40]",
+        "mov r14, [rdi + 48]",
+        "mov r15, [rdi + 56]",
+        "sti",
+        "ret",
+        in("rdi") new,
+        options(nostack)
     );
 }
 
