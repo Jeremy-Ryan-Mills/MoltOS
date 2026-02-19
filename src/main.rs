@@ -15,6 +15,15 @@ use core::panic::PanicInfo;
 
 entry_point!(kernel_main);
 
+/// Demo task: prints every 200 timer ticks to show async Sleep working.
+async fn heartbeat() {
+    use chronos::task::sleep::Sleep;
+    loop {
+        Sleep::new(200).await;
+        chronos::println!("[heartbeat]");
+    }
+}
+
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     chronos::init();
 
@@ -30,9 +39,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("heap initialization failed");
 
+    memory::init_memory_map(&boot_info.memory_map);
 
     let mut executor = Executor::new();
     executor.spawn(Task::new(shell::run_shell()));
+    // executor.spawn(Task::new(heartbeat()));
     executor.run();
 
 

@@ -84,6 +84,7 @@ fn run_command(line: &str) {
         "clear" | "cls" => cmd_clear(),
         "echo" => cmd_echo(rest.trim()),
         "uptime" => cmd_uptime(),
+        "mem" | "memory" => cmd_mem(),
         _ => println!("unknown command: '{}'. Type 'help' for commands.", cmd),
     }
 }
@@ -93,10 +94,16 @@ fn cmd_help() {
     println!("  clear/cls  - clear the screen");
     println!("  echo ...   - print the rest of the line");
     println!("  uptime     - show uptime in timer ticks");
+    println!("  mem/memory - dump memory map");
 }
 
 fn cmd_uptime() {
     println!("{} ticks", crate::uptime_ticks());
+}
+
+fn cmd_mem() {
+    println!("Memory map:");
+    crate::memory::dump_memory_map();
 }
 
 fn cmd_clear() {

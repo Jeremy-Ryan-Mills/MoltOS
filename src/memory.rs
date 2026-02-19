@@ -1,9 +1,35 @@
+use conquer_once::spin::OnceCell;
 use x86_64::{
     structures::paging::{Page, PhysFrame, Mapper, Size4KiB, FrameAllocator, PageTable, OffsetPageTable},
     VirtAddr,
     PhysAddr,
 };
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+
+/// Global memory map set from boot. Used by `dump_memory_map()`.
+static MEMORY_MAP: OnceCell<&'static MemoryMap> = OnceCell::uninit();
+
+/// Register the bootloader memory map so it can be dumped (e.g. via shell `mem`).
+/// Call once from kernel_main with `boot_info.memory_map`.
+pub fn init_memory_map(map: &'static MemoryMap) {
+    MEMORY_MAP.try_init_once(|| map).expect("init_memory_map called more than once");
+}
+
+/// Print the memory map to the console. Panics if `init_memory_map` was not called.
+pub fn dump_memory_map() {
+    let map = MEMORY_MAP.try_get().expect("memory map not initialized (call init_memory_map)");
+    for region in map.iter() {
+        let start = region.range.start_addr();
+        let end = region.range.end_addr();
+        let size_kib = (end - start) / 1024;
+        let kind = match region.region_type {
+            MemoryRegionType::Usable => "Usable",
+            MemoryRegionType::Reserved => "Reserved",
+            _ => "Other",
+        };
+        crate::println!("  {:016x}-{:016x} {:>8} KiB  {}", start, end, size_kib, kind);
+    }
+}
 
 pub struct EmptyFrameAllocator;
 

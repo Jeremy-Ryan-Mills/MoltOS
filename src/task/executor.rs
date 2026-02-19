@@ -70,6 +70,7 @@ impl Executor {
 impl Executor {
     pub fn run(&mut self) -> ! {
         loop {
+            super::sleep::wake_sleepers();
             self.run_ready_tasks();
             self.sleep_if_idle();
         }
