@@ -21,6 +21,9 @@ use core::panic::PanicInfo;
 pub mod gdt;
 pub mod interrupts;
 pub mod serial;
+
+/// Number of PIT timer ticks since boot. Re-exported for convenience.
+pub use interrupts::uptime_ticks;
 pub mod vga_buffer;
 pub mod memory;
 pub mod allocator;

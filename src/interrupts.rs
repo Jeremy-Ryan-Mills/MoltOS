@@ -5,6 +5,7 @@
 //! (timer + keyboard). It also provides a small enum for mapping IRQ lines to
 //! IDT vector indices.
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use lazy_static::lazy_static;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use pic8259::ChainedPics;
@@ -100,12 +101,21 @@ pub fn init_idt() {
     IDT.load();
 }
 
+/// Number of PIT timer ticks since boot. Incremented by the timer interrupt.
+static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Returns the number of timer ticks since boot (uptime in ticks).
+pub fn uptime_ticks() -> u64 {
+    TICK_COUNT.load(Ordering::Relaxed)
+}
+
 /// Timer IRQ handler (PIT, IRQ0).
 ///
-/// Sends an EOI (end-of-interrupt) to the PIC so it can deliver further IRQs.
+/// Increments the tick count and sends an EOI to the PIC.
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    TICK_COUNT.fetch_add(1, Ordering::Relaxed);
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
@@ -174,4 +184,15 @@ extern "x86-interrupt" fn double_fault_handler(
 #[test_case]
 fn test_breakpoint_exception() {
     x86_64::instructions::interrupts::int3();
+}
+
+/// Test that the timer interrupt increments uptime (init already ran in test_kernel_main).
+#[test_case]
+fn test_uptime_increments() {
+    let t0 = crate::uptime_ticks();
+    for _ in 0..5_000_000 {
+        x86_64::instructions::hlt();
+    }
+    let t1 = crate::uptime_ticks();
+    assert!(t1 > t0, "uptime should increase ({} -> {})", t0, t1);
 }

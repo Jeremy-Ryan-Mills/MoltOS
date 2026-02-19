@@ -20,6 +20,10 @@ harness = false
 name = "stack_overflow"
 harness = false
 
+[[test]]
+name = "uptime"
+harness = false
+
 # [profile.dev]
 # panic = "abort" # disable stack unwinding on panic
 
@@ -58,3 +62,7 @@ default-features = false
 version = "0.3.4"
 default-features = false
 features = ["alloc"]
+
+[dev-dependencies]
+bootloader = { version = "0.9", features = ["map_physical_memory"] }
+x86_64 = "0.14.2"

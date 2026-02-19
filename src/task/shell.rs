@@ -83,6 +83,7 @@ fn run_command(line: &str) {
         "help" => cmd_help(),
         "clear" | "cls" => cmd_clear(),
         "echo" => cmd_echo(rest.trim()),
+        "uptime" => cmd_uptime(),
         _ => println!("unknown command: '{}'. Type 'help' for commands.", cmd),
     }
 }
@@ -91,6 +92,11 @@ fn cmd_help() {
     println!("  help       - show this message");
     println!("  clear/cls  - clear the screen");
     println!("  echo ...   - print the rest of the line");
+    println!("  uptime     - show uptime in timer ticks");
+}
+
+fn cmd_uptime() {
+    println!("{} ticks", crate::uptime_ticks());
 }
 
 fn cmd_clear() {
