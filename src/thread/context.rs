@@ -33,6 +33,7 @@ pub struct ThreadContext {
 #[inline(never)]
 pub unsafe fn context_switch(old: *mut ThreadContext, new: *const ThreadContext) {
     asm!(
+        "cli",  // Prevent timer (or other) interrupt during switch; new thread gets sti below
         "mov [rdi + 0], rsp",
         "mov rax, [rsp]",
         "mov [rdi + 8], rax",

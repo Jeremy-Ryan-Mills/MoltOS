@@ -96,14 +96,13 @@ pub fn init() {
     unsafe {
         let mut pics = interrupts::PICS.lock();
         pics.initialize();
-        // Configure PIT to run at 100 Hz for responsive thread switching
-        // Do this AFTER PIC init so PIC doesn't reset it
-        // Temporarily disabled to debug black screen
-        // interrupts::configure_pit(100);
-        // Unmask IRQ1 (keyboard) - by default all IRQs except IRQ0 are masked
-        // IRQ1 is bit 1 in PIC1's mask (bit 0 = IRQ0, bit 1 = IRQ1)
+        // Configure PIT to run at 100 Hz for responsive thread switching.
+        // Do this AFTER PIC init so PIC doesn't reset it.
+        interrupts::configure_pit(100);
+        // Unmask IRQ0 (timer) and IRQ1 (keyboard).
+        // PIC1 mask: bit 0 = IRQ0, bit 1 = IRQ1.
         let [mut mask1, mask2] = pics.read_masks();
-        mask1 &= !(1 << 1); // Clear bit 1 for IRQ1 (keyboard)
+        mask1 &= !((1 << 0) | (1 << 1));
         pics.write_masks(mask1, mask2);
     }
     x86_64::instructions::interrupts::enable();
