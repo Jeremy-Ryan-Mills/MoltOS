@@ -173,6 +173,14 @@ extern "x86-interrupt" fn timer_interrupt_handler(
     };
 
     if let Some((from_ctx, to_ctx)) = switch {
+        // Same-thread "switch" is a no-op; just EOI and return.
+        if core::ptr::eq(from_ctx, to_ctx) {
+            unsafe {
+                PICS.lock()
+                    .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+            }
+            return;
+        }
         unsafe {
             // Write the *interrupted* thread's state into from_ctx, then load to_ctx.
             (*from_ctx).rsp = stack_frame.stack_pointer.as_u64();
@@ -220,6 +228,15 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     };
 
     if let Some((from_ctx, to_ctx)) = switch {
+        // Same-thread "switch" is a no-op and can corrupt state if we save/restore;
+        // just EOI and return so the interrupted thread continues.
+        if core::ptr::eq(from_ctx, to_ctx) {
+            unsafe {
+                PICS.lock()
+                    .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+            }
+            return;
+        }
         // Save callee-saved regs (same as timer interrupt handler)
         let saved_rbx: u64;
         let saved_rbp: u64;
