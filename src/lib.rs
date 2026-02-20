@@ -27,6 +27,8 @@ pub use interrupts::uptime_ticks;
 pub mod vga_buffer;
 pub mod memory;
 pub mod allocator;
+#[allow(path_statements)]
+pub mod syscall;
 pub mod task;
 pub mod thread;
 

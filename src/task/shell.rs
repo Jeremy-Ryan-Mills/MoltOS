@@ -1,11 +1,10 @@
 //! Simple terminal / command loop.
 //!
 //! Reads keyboard input line-by-line, parses the first token as a command,
-//! and runs built-in commands (help, clear, echo).
+//! and runs built-in commands (help, clear, echo, uptime, mem, syscall).
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::str;
 use futures_util::StreamExt;
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
@@ -33,17 +32,13 @@ pub async fn run_shell() {
         if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
             if let Some(key) = keyboard.process_keyevent(key_event) {
                 match key {
-                    // ENTER: handled here (decoded)
                     DecodedKey::Unicode('\r') | DecodedKey::Unicode('\n') => {
                         println!();
                         run_command(line.trim());
                         line.clear();
                         print!("{}", PROMPT);
                     }
-
-                    // Regular printable characters
                     DecodedKey::Unicode(c) => {
-                        // Backspace/DEL often come through as control chars
                         if c == '\x08' || c == '\x7f' {
                             if line.pop().is_some() {
                                 print!("\x08");
@@ -53,8 +48,6 @@ pub async fn run_shell() {
                             print!("{}", c);
                         }
                     }
-
-                    // Non-character keys (arrows, backspace, etc.)
                     DecodedKey::RawKey(key) => {
                         use pc_keyboard::KeyCode;
                         if let KeyCode::Backspace = key {
@@ -69,7 +62,6 @@ pub async fn run_shell() {
     }
 }
 
-/// Parse the line and dispatch to a built-in command.
 fn run_command(line: &str) {
     if line.is_empty() {
         return;
@@ -85,6 +77,7 @@ fn run_command(line: &str) {
         "echo" => cmd_echo(rest.trim()),
         "uptime" => cmd_uptime(),
         "mem" | "memory" => cmd_mem(),
+        "syscall" => cmd_syscall(rest.trim()),
         _ => println!("unknown command: '{}'. Type 'help' for commands.", cmd),
     }
 }
@@ -95,6 +88,7 @@ fn cmd_help() {
     println!("  echo ...   - print the rest of the line");
     println!("  uptime     - show uptime in timer ticks");
     println!("  mem/memory - dump memory map");
+    println!("  syscall    - test syscalls (uptime, putchar)");
 }
 
 fn cmd_uptime() {
@@ -112,4 +106,25 @@ fn cmd_clear() {
 
 fn cmd_echo(args: &str) {
     println!("{}", args);
+}
+
+fn cmd_syscall(args: &str) {
+    use crate::syscall::{Syscall, syscall0, syscall1};
+    let sub = args.split_ascii_whitespace().next().unwrap_or("");
+    match sub {
+        "uptime" | "u" => {
+            let ticks = syscall0(Syscall::Uptime.as_u64());
+            println!("syscall(SYS_UPTIME) = {} ticks", ticks);
+        }
+        "putchar" | "p" => {
+            syscall1(Syscall::PutChar.as_u64(), b'A' as u64);
+            println!(" (printed via syscall)");
+        }
+        "" => {
+            println!("Usage: syscall <uptime|putchar>");
+            println!("  uptime (u)  - call SYS_UPTIME via int 0x80");
+            println!("  putchar (p) - call SYS_PUTCHAR('A') via int 0x80");
+        }
+        _ => println!("unknown syscall test: '{}'. Use uptime or putchar.", sub),
+    }
 }

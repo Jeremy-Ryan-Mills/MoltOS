@@ -65,6 +65,10 @@ lazy_static! {
         idt[InterruptIndex::Keyboard.as_usize()]
             .set_handler_fn(keyboard_interrupt_handler);
 
+        // Syscall gate (int 0x80)
+        idt[crate::syscall::SYSCALL_VECTOR as usize]
+            .set_handler_fn(crate::syscall::syscall_handler);
+
         idt
     };
 }
