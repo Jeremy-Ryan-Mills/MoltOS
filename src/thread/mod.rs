@@ -35,3 +35,26 @@ pub fn enter_scheduler() -> ! {
         x86_64::instructions::interrupts::enable_and_hlt();
     }
 }
+
+// Block the current thread and yield to the next runnable one.
+//
+// Must be called with interrupts already disabled — the caller is responsible
+// for disabling them before adding itself to a waiter list to prevent a lost
+// wakeup race. Interrupts are re-enabled inside context_switch (via sti).
+//
+// Not safe from bootstrap context or interrupt handlers.
+pub unsafe fn block_and_yield() {
+    let switch = {
+        let mut sched = SCHEDULER.lock();
+        sched.block_current_and_prepare_switch(crate::uptime_ticks())
+    };
+
+    match switch {
+        Some((from, to)) => unsafe { context_switch(from, to); },
+        None => {
+            // All threads are blocked — deadlock.
+            crate::serial_println!("DEADLOCK: block_and_yield with no runnable threads");
+            loop { x86_64::instructions::interrupts::enable_and_hlt(); }
+        }
+    }
+}

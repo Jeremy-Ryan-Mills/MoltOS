@@ -29,6 +29,7 @@ pub mod allocator;
 pub mod syscall;
 pub mod task;
 pub mod thread;
+pub mod sync;
 
 #[cfg(test)]
 entry_point!(test_kernel_main);

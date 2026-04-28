@@ -9,7 +9,7 @@
 use spin::Mutex;
 use super::context::ThreadContext;
 use super::schedulers::eevdf::EevdfScheduler;
-use super::thread::Thread;
+use super::thread::{Thread, ThreadId};
 
 pub static SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
 
@@ -43,10 +43,25 @@ impl Scheduler {
         self.eevdf.len()
     }
 
+    pub fn current_thread_id(&self) -> Option<ThreadId> {
+        self.eevdf.current_thread_id()
+    }
+
+    pub fn unblock_thread(&mut self, id: ThreadId) {
+        self.eevdf.unblock_thread(id);
+    }
+
     // Picks the next thread and returns (from_ctx, to_ctx) pointers.
     // The caller must drop the lock before calling context_switch.
     pub fn tick_prepare(&mut self, current_tick: u64) -> Option<(*mut ThreadContext, *const ThreadContext)> {
         let bootstrap_ptr = &mut self.bootstrap_ctx as *mut ThreadContext;
         self.eevdf.tick_prepare(bootstrap_ptr, current_tick)
+    }
+
+    // Mark the current thread blocked and pick the next runnable thread.
+    // The caller must drop the lock before calling context_switch.
+    pub fn block_current_and_prepare_switch(&mut self, current_tick: u64) -> Option<(*mut ThreadContext, *const ThreadContext)> {
+        let bootstrap_ptr = &mut self.bootstrap_ctx as *mut ThreadContext;
+        self.eevdf.block_current_and_prepare_switch(bootstrap_ptr, current_tick)
     }
 }
