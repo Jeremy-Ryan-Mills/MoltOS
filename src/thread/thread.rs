@@ -1,12 +1,8 @@
-//! Kernel thread descriptor.
-
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
-
 use super::context::ThreadContext;
 use super::stack::KernelStack;
 
-/// Opaque thread ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThreadId(pub u64);
 
@@ -17,29 +13,26 @@ impl ThreadId {
     }
 }
 
-/// A kernel thread: owns a stack and saved context.
 pub struct Thread {
     pub id: ThreadId,
-    stack: KernelStack,
+    _stack: KernelStack,  // must be kept alive; context.rsp points into this allocation
     context: Box<ThreadContext>,
 }
 
 impl Thread {
-    /// Creates a new thread that will start at `entry_point` when first scheduled.
-    ///
-    /// `entry_point` must be a `fn()` that does not return (or loops forever).
+    // Create a thread that starts at entry_point when first scheduled.
+    // entry_point must not return.
     pub fn new(entry_point: fn()) -> Self {
         let mut stack = KernelStack::new();
         let mut context = Box::new(ThreadContext::default());
         stack.init_context(context.as_mut(), entry_point as usize);
         Thread {
             id: ThreadId::next(),
-            stack,
+            _stack: stack,
             context,
         }
     }
 
-    /// Returns a pointer to the context for use in context_switch.
     pub fn context_ptr(&mut self) -> *mut ThreadContext {
         self.context.as_mut() as *mut ThreadContext
     }
@@ -49,9 +42,7 @@ impl Thread {
 mod tests {
     use super::{Thread, ThreadId};
 
-    fn dummy_entry() {
-        loop {}
-    }
+    fn dummy_entry() { loop {} }
 
     #[test_case]
     fn test_thread_creation() {
@@ -61,15 +52,14 @@ mod tests {
 
     #[test_case]
     fn test_thread_ids_unique() {
-        let thread1 = Thread::new(dummy_entry);
-        let thread2 = Thread::new(dummy_entry);
-        assert_ne!(thread1.id, thread2.id);
+        let t1 = Thread::new(dummy_entry);
+        let t2 = Thread::new(dummy_entry);
+        assert_ne!(t1.id, t2.id);
     }
 
     #[test_case]
     fn test_thread_context_ptr() {
         let mut thread = Thread::new(dummy_entry);
-        let ptr = thread.context_ptr();
-        assert!(!ptr.is_null());
+        assert!(!thread.context_ptr().is_null());
     }
 }

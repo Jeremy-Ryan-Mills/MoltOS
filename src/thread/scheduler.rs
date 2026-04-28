@@ -1,57 +1,52 @@
-//! Scheduler wrapper that delegates to the active scheduler implementation.
+/***
+ * src/thread/scheduler.rs
+ *
+ * Global scheduler. Wraps EevdfScheduler and owns the bootstrap context —
+ * the saved register state of kernel_main used as the "from" slot on the
+ * first context switch.
+ */
 
 use spin::Mutex;
-
 use super::context::ThreadContext;
-use super::schedulers::Scheduler as SchedulerImpl;
+use super::schedulers::eevdf::EevdfScheduler;
+use super::thread::Thread;
 
-/// Context saved when we leave the bootstrap (kernel_main) to enter a thread.
-static mut BOOTSTRAP_CTX: ThreadContext = ThreadContext {
-    rsp: 0,
-    rip: 0,
-    rbx: 0,
-    rbp: 0,
-    r12: 0,
-    r13: 0,
-    r14: 0,
-    r15: 0,
-};
-
-/// Global scheduler state (uses EEVDF by default).
 pub static SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
 
-/// Scheduler wrapper that provides a unified interface.
 pub struct Scheduler {
-    inner: SchedulerImpl,
+    eevdf: EevdfScheduler,
+    // Saved state for kernel_main. The context switch writes here when leaving
+    // bootstrap; the scheduler reads it back when returning to bootstrap.
+    bootstrap_ctx: ThreadContext,
 }
 
 impl Scheduler {
     pub const fn new() -> Self {
         Self {
-            inner: SchedulerImpl::new(),
+            eevdf: EevdfScheduler::new(),
+            bootstrap_ctx: ThreadContext {
+                rsp: 0, rip: 0, rbx: 0, rbp: 0,
+                r12: 0, r13: 0, r14: 0, r15: 0,
+            },
         }
     }
 
-    /// Adds a new thread with default weight.
-    pub fn spawn(&mut self, thread: super::thread::Thread) {
-        self.inner.spawn(thread);
+    pub fn spawn(&mut self, thread: Thread) {
+        self.eevdf.spawn(thread);
     }
 
-    /// Adds a new thread with a custom weight (EEVDF only).
-    pub fn spawn_with_weight(&mut self, thread: super::thread::Thread, weight: u64) {
-        self.inner.spawn_with_weight(thread, weight);
+    pub fn spawn_with_weight(&mut self, thread: Thread, weight: u64) {
+        self.eevdf.spawn_with_weight(thread, weight);
     }
 
-    /// Number of threads (excluding bootstrap).
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.eevdf.len()
     }
 
-    /// Prepares a context switch: picks the next thread and returns the two
-    /// context pointers. The caller must release the lock and then call
-    /// `context_switch(from, to)` so we don't hold the lock across the switch.
+    // Picks the next thread and returns (from_ctx, to_ctx) pointers.
+    // The caller must drop the lock before calling context_switch.
     pub fn tick_prepare(&mut self, current_tick: u64) -> Option<(*mut ThreadContext, *const ThreadContext)> {
-        let bootstrap_ctx = unsafe { &raw mut BOOTSTRAP_CTX };
-        self.inner.tick_prepare(bootstrap_ctx, current_tick)
+        let bootstrap_ptr = &mut self.bootstrap_ctx as *mut ThreadContext;
+        self.eevdf.tick_prepare(bootstrap_ptr, current_tick)
     }
 }

@@ -3,13 +3,10 @@ use core::task::{Context, Poll};
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-
-pub mod simple_executor;
 pub mod keyboard;
 pub mod executor;
 pub mod shell;
 pub mod sleep;
-
 
 pub struct Task {
     id: TaskId,
@@ -23,9 +20,7 @@ impl Task {
             future: Box::pin(future),
         }
     }
-}
 
-impl Task {
     fn poll(&mut self, context: &mut Context) -> Poll<()> {
         self.future.as_mut().poll(context)
     }
@@ -39,7 +34,8 @@ impl TaskId {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
     }
-    
+
+    #[allow(dead_code)]
     pub(crate) fn as_u64(self) -> u64 {
         self.0
     }

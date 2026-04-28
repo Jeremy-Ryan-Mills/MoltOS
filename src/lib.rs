@@ -1,9 +1,9 @@
-//! Kernel crate root.
-//!
-//! This is the top-level entry point for the kernel as a Rust library crate.
-//! It wires up core subsystems (GDT/TSS, IDT/PIC, basic output), provides a
-//! simple custom test framework for `cargo test` in QEMU, and includes a few
-//! small utilities used across the kernel.
+/***
+ * src/lib.rs
+ *
+ * Kernel crate root. Wires up GDT, IDT, PIC, and output subsystems.
+ * Also provides the custom test framework used by cargo test in QEMU.
+ */
 
 #![no_std]
 #![cfg_attr(test, no_main)]
@@ -21,8 +21,6 @@ use core::panic::PanicInfo;
 pub mod gdt;
 pub mod interrupts;
 pub mod serial;
-
-/// Number of PIT timer ticks since boot. Re-exported for convenience.
 pub use interrupts::uptime_ticks;
 pub mod vga_buffer;
 pub mod memory;
@@ -35,17 +33,10 @@ pub mod thread;
 #[cfg(test)]
 entry_point!(test_kernel_main);
 
-/// Trait implemented by things that can be run as tests.
-///
-/// We use this to print a test name before running it and mark `[ok]` on
-/// success. The test harness passes us a slice of `&dyn Testable`.
 pub trait Testable {
-    fn run(&self) -> ();
+    fn run(&self);
 }
 
-/// Blanket impl so plain `fn()` tests can be used directly.
-///
-/// Any zero-arg function can be treated as a test.
 impl<T> Testable for T
 where
     T: Fn(),
@@ -57,52 +48,31 @@ where
     }
 }
 
-/// Exit codes understood by QEMU when using the `isa-debug-exit` device.
-///
-/// Writing these values to port `0xF4` allows tests to signal success/failure
-/// to the host without needing a full userspace or filesystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum QemuExitCode {
-    /// Test run completed successfully.
     Success = 0x10,
-    /// At least one test failed (or a panic occurred).
-    Failed = 0x11,
+    Failed  = 0x11,
 }
 
-/// Exit QEMU with a specific status code.
-///
-/// This relies on QEMU being launched with the debug exit device enabled
-/// (commonly `-device isa-debug-exit,iobase=0xf4,iosize=0x04`).
 pub fn exit_qemu(exit_code: QemuExitCode) {
     use x86_64::instructions::port::Port;
-
     unsafe {
         let mut port = Port::new(0xf4);
         port.write(exit_code as u32);
     }
 }
 
-/// Initialize core CPU/kernel state needed for interrupts and basic runtime.
-///
-/// Order matters here:
-/// - Load GDT/TSS (needed for IST stacks like double fault)
-/// - Load IDT
-/// - Configure PIT timer to run at 100 Hz for responsive scheduling
-/// - Initialize the PICs (remap IRQs)
-/// - Unmask keyboard IRQ (IRQ1) so keyboard interrupts are delivered
-/// - Enable CPU interrupts
+// Initialize GDT, IDT, PIC, and PIT. Order matters:
+// GDT/TSS must be loaded before IDT entries that use IST stacks.
 pub fn init() {
     gdt::init();
     interrupts::init_idt();
     unsafe {
         let mut pics = interrupts::PICS.lock();
         pics.initialize();
-        // Configure PIT to run at 100 Hz for responsive thread switching.
-        // Do this AFTER PIC init so PIC doesn't reset it.
         interrupts::configure_pit(100);
         // Unmask IRQ0 (timer) and IRQ1 (keyboard).
-        // PIC1 mask: bit 0 = IRQ0, bit 1 = IRQ1.
         let [mut mask1, mask2] = pics.read_masks();
         mask1 &= !((1 << 0) | (1 << 1));
         pics.write_masks(mask1, mask2);
@@ -110,10 +80,6 @@ pub fn init() {
     x86_64::instructions::interrupts::enable();
 }
 
-
-/// Custom test runner used by the `custom_test_frameworks` feature.
-///
-/// Prints test count, executes tests, then exits QEMU with a success code.
 pub fn test_runner(tests: &[&dyn Testable]) {
     serial_println!("Running {} tests", tests.len());
     for test in tests {
@@ -122,10 +88,6 @@ pub fn test_runner(tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
-/// Panic handler used during `cargo test`.
-///
-/// Prints the panic information over serial, exits QEMU with a failure code,
-/// and then halts the CPU.
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
@@ -136,40 +98,24 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 #[cfg(test)]
 fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
     init();
-    
-    // Initialize heap for unit tests that need allocation
     use allocator;
     use memory::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
-    
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe {
-        BootInfoFrameAllocator::init(&boot_info.memory_map)
-    };
-    
+    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
     allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("heap initialization failed");
-    
     test_main();
     hlt_loop();
 }
 
-/// Panic handler for test builds.
-///
-/// Delegates to [`test_panic_handler`].
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     test_panic_handler(info)
 }
 
-/// Halt-loop used when there's nothing else to do.
-///
-/// `hlt` sleeps the CPU until the next interrupt, which is nicer than spinning
-/// at 100% in QEMU.
 pub fn hlt_loop() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
+    loop { x86_64::instructions::hlt(); }
 }

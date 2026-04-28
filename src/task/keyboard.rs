@@ -1,28 +1,25 @@
 use conquer_once::spin::OnceCell;
 use crossbeam_queue::ArrayQueue;
-use crate::{println, print};
-use futures_util::{stream::{Stream, StreamExt}, task::AtomicWaker};
+use futures_util::{stream::Stream, task::AtomicWaker};
 use core::{pin::Pin, task::{Context, Poll}};
-use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
 static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
 static WAKER: AtomicWaker = AtomicWaker::new();
 
-/// Initialize the scancode queue. Call once from kernel_main after heap init so
-/// keyboard interrupts can enqueue scancodes before the shell task runs.
+// Call once from kernel_main after heap init so keyboard IRQs can enqueue
+// scancodes before the shell task starts.
 pub fn init_scancode_queue() {
     let _ = SCANCODE_QUEUE.try_init_once(|| ArrayQueue::new(100));
 }
 
 pub(crate) fn add_scancode(scancode: u8) {
     if let Ok(queue) = SCANCODE_QUEUE.try_get() {
-        if let Err(_) = queue.push(scancode) {
-            // Queue full - drop the scancode
-        } else {
+        if queue.push(scancode).is_ok() {
             WAKER.wake();
         }
+        // Drop silently if queue is full
     }
-    // If queue not initialized, silently drop (shell hasn't started yet)
+    // Drop silently if queue not yet initialized (shell hasn't started)
 }
 
 pub struct ScancodeStream {
@@ -31,7 +28,6 @@ pub struct ScancodeStream {
 
 impl ScancodeStream {
     pub fn new() -> Self {
-        // Use queue if already inited (e.g. by init_scancode_queue); otherwise init now.
         if SCANCODE_QUEUE.try_get().is_err() {
             SCANCODE_QUEUE.try_init_once(|| ArrayQueue::new(100))
                 .expect("ScancodeStream::new failed to init queue");
@@ -44,41 +40,15 @@ impl Stream for ScancodeStream {
     type Item = u8;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<u8>> {
-        let queue = SCANCODE_QUEUE
-            .try_get()
-            .expect("not initialized");
-        
-        // Always re-register the waker first, in case we were switched away
-        // and the previous waker is stale. This ensures keyboard interrupts
-        // can wake us even after context switches.
+        let queue = SCANCODE_QUEUE.try_get().expect("scancode queue not initialized");
+
+        // Register waker before checking queue to avoid a race where a scancode
+        // arrives between the empty-check and returning Pending.
         WAKER.register(cx.waker());
-        
-        // Check for scancodes after registering waker
-        // (scancodes might have arrived while we were switched away)
-        if let Some(scancode) = queue.pop() {
-            // Found a scancode - we don't need to take the waker since we got data
-            return Poll::Ready(Some(scancode));
-        }
 
-        // Queue is empty - return Pending
-        // The waker is already registered, so keyboard interrupts will wake us
-        Poll::Pending
-    }
-}
-
-pub async fn print_keypresses() {
-    let mut scancodes = ScancodeStream::new();
-    let mut keyboard = Keyboard::new(ScancodeSet1::new(),
-        layouts::Us104Key, HandleControl::Ignore);
-
-    while let Some(scancode) = scancodes.next().await {
-        if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-            if let Some(key) = keyboard.process_keyevent(key_event) {
-                match key {
-                    DecodedKey::Unicode(character) => print!("{}", character),
-                    DecodedKey::RawKey(key) => print!("{:?}", key),
-                }
-            }
+        match queue.pop() {
+            Some(scancode) => Poll::Ready(Some(scancode)),
+            None => Poll::Pending,
         }
     }
 }

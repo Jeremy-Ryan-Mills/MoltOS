@@ -1,3 +1,10 @@
+/***
+ * src/main.rs
+ *
+ * Kernel entry point. Initializes memory, heap, scheduler, and spawns the
+ * async executor thread before entering the scheduler.
+ */
+
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
@@ -16,23 +23,10 @@ use spin::Mutex;
 
 entry_point!(kernel_main);
 
-/// Executor is created in kernel_main (before any context switch) to avoid
-/// allocation in the executor thread, which may have a smaller or different
-/// stack/context.
+// Executor is created before any context switch to avoid heap allocation
+// from within the executor thread (which has a smaller stack).
 static EXECUTOR: Mutex<Option<Executor>> = Mutex::new(None);
 
-/// Idle thread: yields immediately so executor thread can run.
-/// This thread exists only to give the scheduler something to switch to,
-/// but it immediately yields back so the executor gets all CPU time.
-fn idle_entry() {
-    loop {
-        // Yield immediately - just enable interrupts and let timer switch us away
-        x86_64::instructions::interrupts::enable();
-        x86_64::instructions::hlt();
-    }
-}
-
-/// Runs in a dedicated thread: takes the pre-created executor and runs it.
 fn executor_entry() {
     let mut executor = EXECUTOR.lock().take().expect("executor not initialized");
     executor.run();
@@ -40,10 +34,7 @@ fn executor_entry() {
 
 async fn heartbeat() {
     use chronos::task::sleep::Sleep;
-    loop {
-        Sleep::new(200).await;
-        //chronos::println!("[heartbeat]");
-    }
+    loop { Sleep::new(200).await; }
 }
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
@@ -54,30 +45,21 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe {
-        BootInfoFrameAllocator::init(&boot_info.memory_map)
-    };
+    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
     allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("heap initialization failed");
 
-    // Identity-map VGA at 0xb8000 so the VGA driver's hardcoded address is valid.
     memory::map_vga_buffer(&mut mapper, &mut frame_allocator);
-
     memory::init_memory_map(&boot_info.memory_map);
 
-    // Init keyboard scancode queue so IRQ handler can enqueue before the shell runs.
     keyboard::init_scancode_queue();
 
-    // Create executor and spawn tasks in bootstrap context (before any context switch).
-    // This avoids allocation in the executor thread.
     let mut executor = Executor::new();
     executor.spawn(Task::new(shell::run_shell()));
     executor.spawn(Task::new(heartbeat()));
     *EXECUTOR.lock() = Some(executor);
 
-    // Spawn executor thread - this is the only thread we need
-    // The executor handles sleeping when idle, so we don't need a separate idle thread
     thread::SCHEDULER.lock().spawn(Thread::new(executor_entry));
 
     println!("Chronos: threads + shell. Timer preempts round-robin.");
@@ -85,8 +67,6 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     thread::enter_scheduler();
 }
 
-/// This function is called on panic.
-/// Uses serial first so we see the panic even if VGA is broken.
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -95,7 +75,6 @@ fn panic(info: &PanicInfo) -> ! {
     chronos::hlt_loop();
 }
 
-/// This function is called on panic while testing.
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

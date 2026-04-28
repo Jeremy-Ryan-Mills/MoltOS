@@ -1,26 +1,27 @@
+/***
+ * src/memory.rs
+ *
+ * Page table setup, physical frame allocator, and VGA buffer mapping.
+ */
+
 use conquer_once::spin::OnceCell;
 use x86_64::{
     structures::paging::{
         mapper::MapToError, Page, PhysFrame, Mapper, Size4KiB, FrameAllocator, PageTable,
         OffsetPageTable,
     },
-    VirtAddr,
-    PhysAddr,
+    VirtAddr, PhysAddr,
 };
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 
-/// Global memory map set from boot. Used by `dump_memory_map()`.
 static MEMORY_MAP: OnceCell<&'static MemoryMap> = OnceCell::uninit();
 
-/// Register the bootloader memory map so it can be dumped (e.g. via shell `mem`).
-/// Call once from kernel_main with `boot_info.memory_map`.
 pub fn init_memory_map(map: &'static MemoryMap) {
     MEMORY_MAP.try_init_once(|| map).expect("init_memory_map called more than once");
 }
 
-/// Print the memory map to the console. Panics if `init_memory_map` was not called.
 pub fn dump_memory_map() {
-    let map = MEMORY_MAP.try_get().expect("memory map not initialized (call init_memory_map)");
+    let map = MEMORY_MAP.try_get().expect("memory map not initialized");
     for region in map.iter() {
         let start = region.range.start_addr();
         let end = region.range.end_addr();
@@ -36,46 +37,28 @@ pub fn dump_memory_map() {
 
 pub struct EmptyFrameAllocator;
 
-/// A FrameAllocator that returns usable frames from the bootloader's memory map.
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryMap,
     next: usize,
 }
 
 unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator {
-    fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        None
-    }
+    fn allocate_frame(&mut self) -> Option<PhysFrame> { None }
 }
 
 impl BootInfoFrameAllocator {
-    /// Create a FrameAllocator from the passed memory map.
-    ///
-    /// This function is unsafe because the caller must guarantee that the passed
-    /// memory map is valid. The main requirement is that all frames that are marked
-    /// as `USABLE` in it are really unused.
+    // Safety: caller must ensure all USABLE frames in the map are truly unused.
     pub unsafe fn init(memory_map: &'static MemoryMap) -> Self {
-        BootInfoFrameAllocator {
-            memory_map,
-            next: 0,
-        }
+        BootInfoFrameAllocator { memory_map, next: 0 }
     }
-}
 
-impl BootInfoFrameAllocator {
-    /// Returns an iterator over the usable frames specified in the memory map.
     fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> {
-        // get usable regions from memory map
-        let regions = self.memory_map.iter();
-        let usable_regions = regions
-            .filter(|r| r.region_type == MemoryRegionType::Usable);
-        // map each region to its address range
-        let addr_ranges = usable_regions
+        let addr_ranges = self.memory_map.iter()
+            .filter(|r| r.region_type == MemoryRegionType::Usable)
             .map(|r| r.range.start_addr()..r.range.end_addr());
-        // transform to an iterator of frame start addresses
-        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
-        // create `PhysFrame` types from the start addresses
-        frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+        addr_ranges
+            .flat_map(|r| r.step_by(4096))
+            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
     }
 }
 
@@ -87,12 +70,8 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     }
 }
 
-/// Initialize a new OffsetPageTable.
-///
-/// This function is unsafe because the caller must guarantee that the
-/// complete physical memory is mapped to virtual memory at the passed
-/// `physical_memory_offset`. Also, this function must be only called once
-/// to avoid aliasing `&mut` references (which is undefined behavior).
+// Safety: physical memory must be fully mapped at physical_memory_offset.
+// Call only once to avoid aliasing mutable references.
 pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
     unsafe {
         let level_4_table = active_level_4_table(physical_memory_offset);
@@ -100,49 +79,16 @@ pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static>
     }
 }
 
-/// Returns a mutable reference to the active level 4 table.
-///
-/// This function is unsafe because the caller must guarantee that the
-/// complete physical memory is mapped to virtual memory at the passed
-/// `physical_memory_offset`. Also, this function must be only called once
-/// to avoid aliasing `&mut` references (which is undefined behavior).
-unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
-    -> &'static mut PageTable
-{
+unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
     use x86_64::registers::control::Cr3;
-
     let (level_4_table_frame, _) = Cr3::read();
-
     let phys = level_4_table_frame.start_address();
     let virt = physical_memory_offset + phys.as_u64();
-    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
-
-    unsafe { &mut *page_table_ptr }
+    unsafe { &mut *virt.as_mut_ptr::<PageTable>() }
 }
 
-/// Creates an example mapping for the given page to frame `0xb8000`.
-pub fn create_example_mapping(
-    page: Page,
-    mapper: &mut OffsetPageTable,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) {
-    use x86_64::structures::paging::PageTableFlags as Flags;
-
-    let frame = PhysFrame::containing_address(PhysAddr::new(0xb8000));
-    let flags = Flags::PRESENT | Flags::WRITABLE;
-
-    let map_to_result = unsafe {
-        // FIXME: this is not safe, we do it only for testing
-        mapper.map_to(page, frame, flags, frame_allocator)
-    };
-    map_to_result.expect("map_to failed").flush();
-}
-
-/// Identity-map the VGA text buffer so virtual address `0xb8000` is valid.
-///
-/// The VGA driver uses `0xb8000` as a virtual address; the bootloader may only
-/// map physical memory at a high offset, so we add this mapping explicitly.
-/// If the bootloader already identity-mapped this page, we treat that as success.
+// Identity-map the VGA text buffer so virtual address 0xb8000 is valid.
+// Treats PageAlreadyMapped as success (bootloader may have done it already).
 pub fn map_vga_buffer(
     mapper: &mut OffsetPageTable,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
@@ -153,63 +99,33 @@ pub fn map_vga_buffer(
     let frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(0xb8000));
     let flags = Flags::PRESENT | Flags::WRITABLE;
 
-    let result = unsafe { mapper.map_to(page, frame, flags, frame_allocator) };
-    match result {
+    match unsafe { mapper.map_to(page, frame, flags, frame_allocator) } {
         Ok(flush) => flush.flush(),
-        Err(MapToError::PageAlreadyMapped(_)) => {
-            // Bootloader already identity-mapped 0xb8000; nothing to do.
-        }
+        Err(MapToError::PageAlreadyMapped(_)) => {}
         Err(e) => panic!("VGA map_to failed: {:?}", e),
     }
 }
 
-/// Translates the given virtual address to the mapped physical address, or
-/// `None` if the address is not mapped.
-///
-/// This function is unsafe because the caller must guarantee that the
-/// complete physical memory is mapped to virtual memory at the passed
-/// `physical_memory_offset`.
-pub unsafe fn translate_addr(addr: VirtAddr, physical_memory_offset: VirtAddr)
-    -> Option<PhysAddr>
-{
-    translate_addr_inner(addr, physical_memory_offset)
-}
-
-/// Private function that is called by `translate_addr`.
-///
-/// This function is safe to limit the scope of `unsafe` because Rust treats
-/// the whole body of unsafe functions as an unsafe block. This function must
-/// only be reachable through `unsafe fn` from outside of this module.
-fn translate_addr_inner(addr: VirtAddr, physical_memory_offset: VirtAddr)
-    -> Option<PhysAddr>
-{
+// Translate a virtual address to its physical address.
+// Returns None if the address is not mapped.
+// Safety: physical memory must be fully mapped at physical_memory_offset.
+pub unsafe fn translate_addr(addr: VirtAddr, physical_memory_offset: VirtAddr) -> Option<PhysAddr> {
     use x86_64::structures::paging::page_table::FrameError;
     use x86_64::registers::control::Cr3;
 
-    // read the active level 4 frame from the CR3 register
     let (level_4_table_frame, _) = Cr3::read();
-
-    let table_indexes = [
-        addr.p4_index(), addr.p3_index(), addr.p2_index(), addr.p1_index()
-    ];
+    let table_indexes = [addr.p4_index(), addr.p3_index(), addr.p2_index(), addr.p1_index()];
     let mut frame = level_4_table_frame;
 
-    // traverse the multi-level page table
     for &index in &table_indexes {
-        // convert the frame into a page table reference
         let virt = physical_memory_offset + frame.start_address().as_u64();
-        let table_ptr: *const PageTable = virt.as_ptr();
-        let table = unsafe {&*table_ptr};
-
-        // read the page table entry and update `frame`
-        let entry = &table[index];
-        frame = match entry.frame() {
+        let table = unsafe { &*virt.as_ptr::<PageTable>() };
+        frame = match table[index].frame() {
             Ok(frame) => frame,
             Err(FrameError::FrameNotPresent) => return None,
             Err(FrameError::HugeFrame) => panic!("huge pages not supported"),
         };
     }
 
-    // calculate the physical address by adding the page offset
     Some(frame.start_address() + u64::from(addr.page_offset()))
 }
