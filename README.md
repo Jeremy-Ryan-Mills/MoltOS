@@ -17,7 +17,7 @@ Requires Rust nightly, `bootimage`, and QEMU.
 ```bash
 cargo build   # build
 cargo run     # run in QEMU
-cargo test    # run tests in QEMU
+cargo test    # run tests
 ```
 
 ## Project Structure
