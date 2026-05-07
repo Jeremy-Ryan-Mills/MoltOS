@@ -175,8 +175,74 @@ int abs(int x) { return x < 0 ? -x : x; }
 
 double fabs(double x) { return x < 0 ? -x : x; }
 
-/* TODO: implement vsnprintf to get formatted output on serial.
- * For now these forward plain strings where possible and drop format args. */
+/* Minimal vsnprintf: handles %s %d %i %u %x %X %c %% with basic width/zero-pad. */
+static int fmt_vsnprintf(char *buf, size_t maxlen, const char *fmt, va_list ap) {
+    size_t pos = 0;
+#define OUT(c) do { if (pos + 1 < maxlen) buf[pos++] = (c); } while(0)
+
+    while (*fmt) {
+        if (*fmt != '%') { OUT(*fmt++); continue; }
+        fmt++;
+        if (*fmt == '\0') break;
+        if (*fmt == '%') { OUT('%'); fmt++; continue; }
+
+        /* flags */
+        int zero_pad = 0;
+        if (*fmt == '-') { fmt++; } /* ignore left-align flag */
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+
+        /* width */
+        int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt++ - '0'); }
+
+        /* precision: .N for integers means minimum N digits (treat as zero-padded width) */
+        if (*fmt == '.') {
+            fmt++;
+            int prec = 0;
+            while (*fmt >= '0' && *fmt <= '9') { prec = prec * 10 + (*fmt++ - '0'); }
+            if (prec > width) { width = prec; zero_pad = 1; }
+        }
+
+        /* long modifier */
+        int is_long = 0;
+        if (*fmt == 'l') { is_long = 1; fmt++; if (*fmt == 'l') fmt++; }
+
+        char spec = *fmt++;
+        if (spec == 'c') {
+            OUT((char)va_arg(ap, int));
+        } else if (spec == 's') {
+            const char *s = va_arg(ap, const char *);
+            if (!s) s = "(null)";
+            while (*s) OUT(*s++);
+        } else if (spec == 'd' || spec == 'i' || spec == 'u' ||
+                   spec == 'x' || spec == 'X') {
+            unsigned long long val;
+            int neg = 0;
+            if (spec == 'd' || spec == 'i') {
+                long long sv = is_long ? (long long)va_arg(ap, long) : (long long)va_arg(ap, int);
+                if (sv < 0) { neg = 1; val = (unsigned long long)-sv; }
+                else val = (unsigned long long)sv;
+            } else {
+                val = is_long ? (unsigned long long)va_arg(ap, unsigned long) : (unsigned long long)va_arg(ap, unsigned int);
+            }
+            int base = (spec == 'x' || spec == 'X') ? 16 : 10;
+            const char *digits = (spec == 'X') ? "0123456789ABCDEF" : "0123456789abcdef";
+            char tmp[32]; int tlen = 0;
+            if (val == 0) tmp[tlen++] = '0';
+            else while (val) { tmp[tlen++] = digits[val % base]; val /= base; }
+            int total = tlen + (neg ? 1 : 0);
+            char pad = zero_pad ? '0' : ' ';
+            if (!zero_pad) while (total < width) { OUT(pad); total++; }
+            if (neg) OUT('-');
+            if (zero_pad) while (tlen + (neg?1:0) < width) { OUT('0'); width--; }
+            for (int k = tlen - 1; k >= 0; k--) OUT(tmp[k]);
+        }
+    }
+    if (pos < maxlen) buf[pos] = '\0';
+    else if (maxlen > 0) buf[maxlen-1] = '\0';
+    return (int)pos;
+#undef OUT
+}
 
 static void serial_puts(const char *s) {
     rust_serial_write(s, strlen(s));
@@ -188,31 +254,99 @@ int puts(const char *s) {
     return 0;
 }
 
+int vsnprintf(char *buf, size_t maxlen, const char *fmt, va_list ap) {
+    return fmt_vsnprintf(buf, maxlen, fmt, ap);
+}
+
+int snprintf(char *buf, size_t maxlen, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = fmt_vsnprintf(buf, maxlen, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+static int vprintf_impl(const char *fmt, va_list ap) {
+    char buf[512];
+    int r = fmt_vsnprintf(buf, sizeof(buf), fmt, ap);
+    serial_puts(buf);
+    return r;
+}
+
+int printf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vprintf_impl(fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+int fprintf(void *stream, const char *fmt, ...) {
+    (void)stream;
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vprintf_impl(fmt, ap);
+    va_end(ap);
+    return r;
+}
+
 /* GCC emits __printf_chk(flag, fmt, ...) instead of printf when fortified. */
 int __printf_chk(int flag, const char *fmt, ...) {
-    /* TODO: format string into a buffer with vsnprintf then call serial_puts. */
     (void)flag;
-    serial_puts(fmt); /* prints raw format string as a placeholder */
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    fmt_vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    serial_puts(buf);
     return 0;
 }
 
 int __fprintf_chk(void *stream, int flag, const char *fmt, ...) {
     (void)stream; (void)flag;
-    serial_puts(fmt);
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    fmt_vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    serial_puts(buf);
     return 0;
 }
 
+int toupper(int c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }
+int tolower(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+int isdigit(int c) { return c >= '0' && c <= '9'; }
+int isspace(int c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
+int isprint(int c) { return c >= 0x20 && c < 0x7f; }
+int isalpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+int isalnum(int c) { return isalpha(c) || isdigit(c); }
+
+int atoi(const char *s) { return (int)strtol(s, NULL, 10); }
+
+int sprintf(char *buf, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = fmt_vsnprintf(buf, 4096, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+int vsprintf(char *buf, const char *fmt, va_list ap) {
+    return fmt_vsnprintf(buf, 4096, fmt, ap);
+}
+
 int __snprintf_chk(char *buf, size_t maxlen, int flag, size_t buflen, const char *fmt, ...) {
-    /* TODO: implement formatting. */
     (void)flag; (void)buflen;
-    strncpy(buf, fmt, maxlen);
-    return (int)strlen(fmt);
+    va_list ap;
+    va_start(ap, fmt);
+    int r = fmt_vsnprintf(buf, maxlen, fmt, ap);
+    va_end(ap);
+    return r;
 }
 
 int __vsnprintf_chk(char *buf, size_t maxlen, int flag, size_t buflen, const char *fmt, va_list ap) {
-    (void)flag; (void)buflen; (void)ap;
-    strncpy(buf, fmt, maxlen);
-    return (int)strlen(fmt);
+    (void)flag; (void)buflen;
+    return fmt_vsnprintf(buf, maxlen, fmt, ap);
 }
 
 int __isoc99_sscanf(const char *str, const char *fmt, ...) {
@@ -331,8 +465,13 @@ void exit(int code) {
  * That file calls DG_GetTicksMs and DG_SleepMs, which are in src/doom/mod.rs. */
 
 void I_Error(const char *error, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, error);
+    fmt_vsnprintf(buf, sizeof(buf), error, ap);
+    va_end(ap);
     serial_puts("DOOM ERROR: ");
-    serial_puts(error);
+    serial_puts(buf);
     rust_serial_write("\n", 1);
     rust_hlt();
 }
@@ -348,9 +487,8 @@ void I_AtExit(void (*func)(void), int run_on_error) {
 }
 
 void *I_ZoneBase(int *size) {
-    /* Return NULL to tell Doom's zone allocator to use malloc instead. */
-    *size = 0;
-    return NULL;
+    *size = 4 * 1024 * 1024;
+    return malloc((size_t)*size);
 }
 
 int I_ConsoleStdout(void)             { return 1; }

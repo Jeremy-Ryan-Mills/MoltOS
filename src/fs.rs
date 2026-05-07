@@ -35,8 +35,8 @@ pub enum FsError {
 }
 
 pub fn init() -> Result<usize, FsError> {
-    // 16 MiB ceiling; a DOOM1.WAD + overhead fits easily.
-    let data = ata::read_all(Drive::Slave, 16 * 1024 * 1024)
+    // 6 MiB ceiling: DOOM1.WAD shareware is ~4.2 MiB; leaves heap headroom.
+    let data = ata::read_all(Drive::Slave, 6 * 1024 * 1024)
         .map_err(|e| match e {
             ata::AtaError::NoDrive => FsError::NoDrive,
             _ => FsError::DiskError,
@@ -60,7 +60,7 @@ pub fn open(name: &str) -> Option<&'static [u8]> {
         let raw_name = &entry[..NAME_LEN];
         let nul = raw_name.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         let entry_name = core::str::from_utf8(&raw_name[..nul]).ok()?;
-        if entry_name == name {
+        if entry_name.eq_ignore_ascii_case(name) {
             let offset = u32::from_le_bytes(entry[32..36].try_into().ok()?) as usize;
             let size   = u32::from_le_bytes(entry[36..40].try_into().ok()?) as usize;
             return Some(&data[offset..offset + size]);

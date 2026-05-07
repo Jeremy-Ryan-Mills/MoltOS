@@ -53,10 +53,11 @@ fn main() {
         .define("DOOMGENERIC_RESX", "320")
         .define("DOOMGENERIC_RESY", "200")
         .define("CMAP256", None)
-        .opt_level(2)
+        .opt_level(0)
         .warnings(false) // doom source has many; suppress noise
         .compile("doom");
 
     println!("cargo:rerun-if-changed=vendor/doomgeneric/doomgeneric");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/ffi/stubs.c");
 }

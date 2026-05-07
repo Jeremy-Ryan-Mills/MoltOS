@@ -1,22 +1,30 @@
 use alloc::boxed::Box;
+use alloc::vec;
 use super::context::ThreadContext;
 
 pub const STACK_SIZE: usize = 16 * 1024;
 const STACK_ALIGN: usize = 16;
 
 pub struct KernelStack {
-    storage: Box<[u8; STACK_SIZE]>,
+    storage: Box<[u8]>,
 }
 
 impl KernelStack {
     pub fn new() -> Self {
-        Self { storage: Box::new([0u8; STACK_SIZE]) }
+        Self::with_size(STACK_SIZE)
+    }
+
+    pub fn with_size(size: usize) -> Self {
+        Self { storage: vec![0u8; size].into_boxed_slice() }
     }
 
     // Highest address of the stack (stack grows downward), aligned for ABI calls.
+    // We want RSP ≡ 8 (mod 16) at function entry (x86_64 ABI).
+    // context_switch_to uses `ret` which pops 8 bytes, so we place the entry point
+    // at RSP = 16n-16; after `ret`, RSP = 16n-8 as the ABI requires.
     pub fn top(&self) -> u64 {
-        let end = self.storage.as_ptr() as u64 + STACK_SIZE as u64;
-        (end & !(STACK_ALIGN as u64)) - 8
+        let end = self.storage.as_ptr() as u64 + self.storage.len() as u64;
+        (end & !(STACK_ALIGN as u64)) - 16
     }
 
     // Set up ctx for first-time entry to entry_point.
@@ -41,7 +49,8 @@ mod tests {
     fn test_stack_allocation() {
         let stack = KernelStack::new();
         assert!(stack.top() > 0);
-        assert_eq!(stack.top() % STACK_ALIGN as u64, 8);
+        // top is 16-byte aligned; after ret pops 8 bytes, RSP = top+8 (16n-8, ABI entry)
+        assert_eq!(stack.top() % STACK_ALIGN as u64, 0);
     }
 
     #[test_case]
@@ -57,6 +66,7 @@ mod tests {
     #[test_case]
     fn test_stack_alignment() {
         let stack = KernelStack::new();
-        assert_eq!((stack.top() + 8) % STACK_ALIGN as u64, 0);
+        // After ret from top, RSP = top+8. We want (RSP+8) % 16 == 0 (x86-64 ABI at call sites).
+        assert_eq!((stack.top() + 16) % STACK_ALIGN as u64, 0);
     }
 }

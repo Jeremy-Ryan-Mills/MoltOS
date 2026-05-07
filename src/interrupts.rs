@@ -27,6 +27,10 @@ lazy_static! {
 
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         idt.page_fault.set_handler_fn(page_fault_handler);
+        idt.general_protection_fault.set_handler_fn(gp_fault_handler);
+        idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
+        idt.segment_not_present.set_handler_fn(segment_not_present_handler);
+        idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
 
         unsafe {
             idt.double_fault
@@ -81,6 +85,11 @@ pub fn uptime_ticks() -> u64 {
 // Write the interrupted thread's state into from_ctx, send EOI, then jump to to_ctx.
 // Called from interrupt handlers after they've saved the callee-saved registers.
 // Does not return — execution continues in to_ctx's thread.
+//
+// context_switch_to resumes via `ret`, which pops [ctx.rsp] and jumps there.
+// So ctx.rsp must point to the resume address on the thread's stack.
+// We achieve this by decrementing rsp by 8 and writing rip there, matching
+// how an explicit `call` instruction places the return address at [rsp].
 #[inline(always)]
 unsafe fn irq_preempt(
     from_ctx: *mut crate::thread::context::ThreadContext,
@@ -93,7 +102,11 @@ unsafe fn irq_preempt(
     unsafe {
         let ctx = &mut *from_ctx;
         ctx.rip = rip;
-        ctx.rsp = rsp;
+        // Push rip onto the interrupted thread's stack so context_switch_to's
+        // `ret` instruction will pop the correct resume address.
+        let resume_rsp = rsp - 8;
+        *(resume_rsp as *mut u64) = rip;
+        ctx.rsp = resume_rsp;
         ctx.rbx = saved[0];
         ctx.rbp = saved[1];
         ctx.r12 = saved[2];
@@ -168,6 +181,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(stack_frame: InterruptStack
 
     let scancode: u8 = unsafe { x86_64::instructions::port::Port::new(0x60u16).read() };
     crate::task::keyboard::add_scancode(scancode);
+    crate::ffi::feed_scancode(scancode);
 
     let switch = {
         let mut sched = crate::thread::SCHEDULER.lock();
@@ -191,6 +205,39 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(stack_frame: InterruptStack
     } else {
         unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8()); }
     }
+}
+
+extern "x86-interrupt" fn gp_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    crate::serial_println!("EXCEPTION: GENERAL PROTECTION FAULT (code={:#x})", error_code);
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
+    hlt_loop();
+}
+
+extern "x86-interrupt" fn stack_segment_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    crate::serial_println!("EXCEPTION: STACK SEGMENT FAULT (code={:#x})", error_code);
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
+    hlt_loop();
+}
+
+extern "x86-interrupt" fn segment_not_present_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    crate::serial_println!("EXCEPTION: SEGMENT NOT PRESENT (code={:#x})", error_code);
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
+    hlt_loop();
+}
+
+extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
+    crate::serial_println!("EXCEPTION: INVALID OPCODE");
+    crate::serial_println!("Stack Frame: {:#?}", stack_frame);
+    hlt_loop();
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {

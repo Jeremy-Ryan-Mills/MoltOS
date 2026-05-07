@@ -77,10 +77,24 @@ pub fn init() {
         let mut pics = interrupts::PICS.lock();
         pics.initialize();
         interrupts::configure_pit(100);
-        // Unmask IRQ0 (timer) and IRQ1 (keyboard).
-        let [mut mask1, mask2] = pics.read_masks();
-        mask1 &= !((1 << 0) | (1 << 1));
-        pics.write_masks(mask1, mask2);
+        // initialize() clears the IMR (all IRQs unmasked). Explicitly mask
+        // everything except IRQ0 (timer) and IRQ1 (keyboard) on PIC1.
+        // All PIC2 IRQs (IRQ8-15, including IRQ14 ATA) are masked.
+        pics.write_masks(0xFF & !((1 << 0) | (1 << 1)), 0xFF);
+
+        // Enable SSE/SSE2: clear CR0.EM (bit 2), set CR0.MP (bit 1),
+        // set CR4.OSFXSR (bit 9) and CR4.OSXMMEXCPT (bit 10).
+        // Without this, any XMM instruction the C compiler emits causes #UD.
+        core::arch::asm!(
+            "mov rax, cr0",
+            "and rax, ~(1 << 2)",   // clear EM
+            "or  rax,  (1 << 1)",   // set MP
+            "mov cr0, rax",
+            "mov rax, cr4",
+            "or  rax,  (3 << 9)",   // set OSFXSR | OSXMMEXCPT
+            "mov cr4, rax",
+            out("rax") _,
+        );
     }
     x86_64::instructions::interrupts::enable();
 }

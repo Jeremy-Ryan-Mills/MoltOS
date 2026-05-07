@@ -26,9 +26,10 @@ impl ThreadMeta {
 
     // Virtual deadline: when this thread should next run.
     // Lower deadline = run sooner. Higher weight pushes deadline earlier.
+    // Uses a 1024x scale factor to prevent integer truncation at small time slices.
     fn virtual_deadline(&self, time_slice: u64, sum_weights: u64) -> u64 {
         if self.weight == 0 { return u64::MAX; }
-        self.vruntime + (time_slice * sum_weights) / self.weight
+        self.vruntime + (time_slice * sum_weights * 1024) / self.weight
     }
 }
 
@@ -99,7 +100,9 @@ impl EevdfScheduler {
             let sum_weights: u64 = self.metadata.iter().filter(|m| !m.blocked).map(|m| m.weight).sum();
             if sum_weights > 0 {
                 let weight = self.metadata[prev_idx].weight;
-                let vruntime_delta = (time_slice * weight) / sum_weights;
+                // Scale by 1024 to match virtual_deadline; prevents truncation to 0
+                // when time_slice is small relative to sum_weights/weight ratio.
+                let vruntime_delta = (time_slice * weight * 1024) / sum_weights;
                 self.metadata[prev_idx].vruntime += vruntime_delta;
             }
         }

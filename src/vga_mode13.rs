@@ -44,6 +44,8 @@ pub fn init(
 ) {
     map_framebuffer(mapper, frame_allocator);
     set_mode();
+    // Clear framebuffer to black so the screen doesn't show garbage before Doom draws.
+    framebuffer().fill(0);
 }
 
 fn set_mode() {

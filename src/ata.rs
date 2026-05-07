@@ -45,11 +45,15 @@ unsafe fn delay400ns() {
 
 unsafe fn wait_ready() -> Result<(), AtaError> {
     let mut p: Port<u8> = Port::new(STATUS);
+    let mut spins = 0u32;
     loop {
         let s = unsafe { p.read() };
         if s == 0xFF { return Err(AtaError::NoDrive); }
         if s & ERR_BIT != 0 { return Err(AtaError::DiskError); }
         if s & BSY == 0 && s & DRQ != 0 { return Ok(()); }
+        if s & BSY == 0 { return Err(AtaError::NoDrive); } // idle, no transfer pending
+        spins += 1;
+        if spins > 1_000_000 { return Err(AtaError::NoDrive); }
     }
 }
 
@@ -104,7 +108,19 @@ pub fn read_all(drive: Drive, max_bytes: usize) -> Result<alloc::vec::Vec<u8>, A
         match read(drive, i as u32, slice) {
             Ok(()) => { end = (i + count) * 512; }
             Err(AtaError::NoDrive) => break,
-            Err(e) => return Err(e),
+            Err(_) => {
+                if end == 0 { return Err(AtaError::DiskError); }
+                // Multi-sector read hit the end of the disk. Fall back to
+                // one-sector-at-a-time to capture any valid partial sectors.
+                for j in 0..count {
+                    let single = &mut buf[(i + j) * 512..(i + j + 1) * 512];
+                    match read(drive, (i + j) as u32, single) {
+                        Ok(()) => { end = (i + j + 1) * 512; }
+                        _ => break,
+                    }
+                }
+                break;
+            }
         }
     }
 
