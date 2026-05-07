@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [package.metadata.bootimage]
-run-args = ["-m", "256M"]
+run-args = ["-m", "256M", "-serial", "stdio", "-drive", "file=disk.cxfs,format=raw,if=ide,index=1,media=disk"]
 test-args = [
     "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", 
     "-serial", "stdio",
