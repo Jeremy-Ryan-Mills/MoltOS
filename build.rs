@@ -35,7 +35,7 @@ fn main() {
         .collect();
 
     cc::Build::new()
-        .file("src/doom/stubs.c")
+        .file("src/ffi/stubs.c")
         .files(&sources)
         .include(&doom_src)
         // Freestanding kernel target — no hosted libc assumptions.

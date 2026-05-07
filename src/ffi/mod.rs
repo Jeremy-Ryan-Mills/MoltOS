@@ -10,8 +10,10 @@
  * vga_mode13::init() and fs::init().
  */
 
+extern crate alloc;
+
+use alloc::alloc::{Layout, alloc as alloc_fn, dealloc, realloc as realloc_fn};
 use crate::vga_mode13;
-use alloc::alloc::{Layout, alloc, dealloc};
 
 unsafe extern "C" {
     // Call once to initialize Doom (loads WAD, sets up engine state).
@@ -97,15 +99,57 @@ pub extern "C" fn DG_SetWindowTitle(_title: *const u8) {
 }
 
 
-// implemented for C stubs in stubs.c
+// ---------------------------------------------------------------------------
+// Rust functions called from stubs.c
+// ---------------------------------------------------------------------------
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_alloc(size: usize, align: usize) -> *mut u8 {
     let layout = Layout::from_size_align(size, align).unwrap();
-    let ptr = unsafe { alloc(layout) };
+    unsafe { alloc_fn(layout) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_free(ptr: *mut u8, size: usize, align: usize) {
     let layout = Layout::from_size_align(size, align).unwrap();
-    unsafe { dealloc(ptr, layout)}
+    unsafe { dealloc(ptr, layout) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8 {
+    let layout = Layout::from_size_align(old_size, align).unwrap();
+    unsafe { realloc_fn(ptr, layout, new_size) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_hlt() -> ! {
+    crate::hlt_loop()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_serial_write(s: *const u8, len: usize) {
+    let bytes = unsafe { core::slice::from_raw_parts(s, len) };
+    if let Ok(s) = core::str::from_utf8(bytes) {
+        crate::serial_print!("{}", s);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_fs_open(name: *const u8, out_size: *mut usize) -> *const u8 {
+    let name = match unsafe { core::ffi::CStr::from_ptr(name as *const i8) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return core::ptr::null(),
+    };
+    match crate::fs::open(name) {
+        Some(data) => {
+            unsafe { *out_size = data.len(); }
+            data.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_uptime_ticks() -> u64 {
+    crate::uptime_ticks()
 }

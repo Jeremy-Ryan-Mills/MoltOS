@@ -29,14 +29,17 @@ extern size_t strlen(const char *s);
 
 void *malloc(size_t size) {
     if (size == 0) return (void *)1; /* non-NULL for zero-size */
-    return rust_alloc(size, 16);
+    void* raw = rust_alloc(size + sizeof(size_t), 16);
+    if (!raw) { return NULL; }
+    *(size_t *)raw = size;
+    return (char *)raw + sizeof(size_t);
 }
 
 void free(void *ptr) {
-    /* TODO: rust_dealloc needs the original size.
-     * Proper fix: store size in a header word before the allocation.
-     * For now this leaks; replace once you have a header scheme. */
-    (void)ptr;
+    if (!ptr) return;
+    char *raw = (char *)ptr - sizeof(size_t);
+    size_t size = *(size_t *)raw;
+    rust_free(raw, size + sizeof(size_t), 16);
 }
 
 void *calloc(size_t nmemb, size_t size) {
@@ -47,12 +50,12 @@ void *calloc(size_t nmemb, size_t size) {
 }
 
 void *realloc(void *ptr, size_t new_size) {
-    /* TODO: same problem as free — needs original size.
-     * Allocate fresh, copy, leak old. Replace with header scheme. */
-    if (!ptr)        return malloc(new_size);
+    if (!ptr) return malloc(new_size);
     if (!new_size) { free(ptr); return NULL; }
+    size_t old_size = *((size_t *)((char *)ptr - sizeof(size_t)));
     void *n = malloc(new_size);
-    if (n) memcpy(n, ptr, new_size); /* may copy less than original — safe for grow */
+    if (n) memcpy(n, ptr, old_size < new_size ? old_size : new_size);
+    free(ptr);
     return n;
 }
 
