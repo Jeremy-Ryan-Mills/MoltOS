@@ -53,6 +53,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     memory::map_vga_buffer(&mut mapper, &mut frame_allocator);
     memory::init_memory_map(&boot_info.memory_map);
 
+    match chronos::fs::init() {
+        Ok(n)  => chronos::serial_println!("fs: loaded {} file(s)", n),
+        Err(e) => chronos::serial_println!("fs: {:?} (no disk or empty archive)", e),
+    }
+
     keyboard::init_scancode_queue();
 
     let mut executor = Executor::new();

@@ -26,6 +26,7 @@ pub mod vga_buffer;
 pub mod vga_mode13;
 pub mod ata;
 pub mod fs;
+pub mod doom;
 pub mod memory;
 pub mod allocator;
 #[allow(path_statements)]
