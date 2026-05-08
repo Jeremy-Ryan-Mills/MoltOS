@@ -85,6 +85,7 @@ default-features = false
 features = ["alloc"]
 
 [features]
+default = ["doom"]
 doom = []
 
 [build-dependencies]

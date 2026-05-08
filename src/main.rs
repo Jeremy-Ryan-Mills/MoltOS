@@ -17,8 +17,6 @@ use bootloader::{BootInfo, entry_point};
 use moltos::println;
 use moltos::task::{keyboard, Task, executor::Executor, shell};
 use moltos::thread::{self, Thread};
-#[cfg(feature = "doom")]
-use moltos::ffi;
 use x86_64::VirtAddr;
 use core::panic::PanicInfo;
 use spin::Mutex;
@@ -76,13 +74,6 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     thread::SCHEDULER.lock().spawn(
         Thread::with_stack_size(executor_entry, 256 * 1024) // 256 KiB for async futures
     );
-    #[cfg(feature = "doom")]
-    {
-        fn doom_entry() { ffi::doom_thread_entry(); }
-        thread::SCHEDULER.lock().spawn(
-            Thread::with_stack_size(doom_entry, 24 * 1024 * 1024) // 24 MiB — Doom needs it
-        );
-    }
 
     println!("Moltos: threads + shell. Timer preempts round-robin.");
     println!("Scheduler has {} threads", thread::SCHEDULER.lock().len());

@@ -1,6 +1,10 @@
 # Chronos OS
 
-A hobby x86_64 kernel written in Rust, demonstrating memory management, preemptive multitasking, interrupt handling, and async/await.
+![Moltos logo](images/logo.png)
+
+A hobby x86_64 kernel written in Rust, demonstrating memory management, preemptive multitasking, interrupt handling, and async/await. It runs Doom.
+
+![Doom running on Chronos OS](images/doom.png)
 
 ## Features
 
@@ -9,6 +13,7 @@ A hobby x86_64 kernel written in Rust, demonstrating memory management, preempti
 - **Multitasking**: Kernel threads with EEVDF scheduler (round-robin alternative), context switching
 - **Async**: Custom executor, waker-based task scheduling, async sleep, keyboard input stream
 - **Shell**: VGA text mode (80x25), serial debug output, built-in commands: `help`, `clear`, `echo`, `uptime`, `mem`
+- **Doom**: VGA mode 13h framebuffer (320x200, 256 color), runs doomgeneric as a kernel thread
 
 ## Build
 
@@ -19,6 +24,8 @@ cargo build   # build
 cargo run     # run in QEMU
 cargo test    # run tests in QEMU
 ```
+
+To run Doom, place `doom1.wad` in the root of the repo and type `doom` at the shell prompt. The kernel will switch to graphics mode and launch the game.
 
 ## Project Structure
 
