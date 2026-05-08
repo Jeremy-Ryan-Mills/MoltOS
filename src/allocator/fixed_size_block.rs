@@ -92,4 +92,20 @@ unsafe impl GlobalAlloc for Locked<FixedSizeBlockAllocator> {
             }
         }
     }
+
+    // Override the default realloc to avoid Layout::from_size_align_unchecked,
+    // which panics on precondition checks in nightly debug builds.
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_layout = match Layout::from_size_align(new_size, layout.align()) {
+            Ok(l) => l,
+            Err(_) => return ptr::null_mut(),
+        };
+        let new_ptr = unsafe { self.alloc(new_layout) };
+        if !new_ptr.is_null() {
+            let copy_size = layout.size().min(new_size);
+            unsafe { ptr::copy_nonoverlapping(ptr, new_ptr, copy_size); }
+            unsafe { self.dealloc(ptr, layout); }
+        }
+        new_ptr
+    }
 }

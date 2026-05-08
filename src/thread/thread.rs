@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 use super::context::ThreadContext;
-use super::stack::KernelStack;
+use super::stack::{KernelStack, STACK_SIZE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThreadId(pub u64);
@@ -23,7 +23,11 @@ impl Thread {
     // Create a thread that starts at entry_point when first scheduled.
     // entry_point must not return.
     pub fn new(entry_point: fn()) -> Self {
-        let mut stack = KernelStack::new();
+        Self::with_stack_size(entry_point, STACK_SIZE)
+    }
+
+    pub fn with_stack_size(entry_point: fn(), stack_bytes: usize) -> Self {
+        let mut stack = KernelStack::with_size(stack_bytes);
         let mut context = Box::new(ThreadContext::default());
         stack.init_context(context.as_mut(), entry_point as usize);
         Thread {

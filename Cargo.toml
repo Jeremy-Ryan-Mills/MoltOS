@@ -1,9 +1,10 @@
 [package]
-name = "chronos"
+name = "moltos"
 version = "0.1.0"
 edition = "2024"
 
 [package.metadata.bootimage]
+run-args = ["-m", "256M", "-serial", "stdio", "-drive", "file=disk.cxfs,format=raw,if=ide,index=1,media=disk"]
 test-args = [
     "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", 
     "-serial", "stdio",
@@ -51,7 +52,7 @@ harness = false
 # panic = "abort" # disable stack unwinding on panic
 
 [[bin]]
-name = "chronos"
+name = "moltos"
 test = false
 bench = false
 
@@ -82,6 +83,12 @@ default-features = false
 version = "0.3.4"
 default-features = false
 features = ["alloc"]
+
+[features]
+doom = []
+
+[build-dependencies]
+cc = "1.0"
 
 [dev-dependencies]
 bootloader = { version = "0.9", features = ["map_physical_memory"] }

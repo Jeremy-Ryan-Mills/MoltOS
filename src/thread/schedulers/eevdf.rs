@@ -26,9 +26,10 @@ impl ThreadMeta {
 
     // Virtual deadline: when this thread should next run.
     // Lower deadline = run sooner. Higher weight pushes deadline earlier.
+    // Uses a 1024x scale factor to prevent integer truncation at small time slices.
     fn virtual_deadline(&self, time_slice: u64, sum_weights: u64) -> u64 {
         if self.weight == 0 { return u64::MAX; }
-        self.vruntime + (time_slice * sum_weights) / self.weight
+        self.vruntime + (time_slice * sum_weights * 1024) / self.weight
     }
 }
 
@@ -99,7 +100,9 @@ impl EevdfScheduler {
             let sum_weights: u64 = self.metadata.iter().filter(|m| !m.blocked).map(|m| m.weight).sum();
             if sum_weights > 0 {
                 let weight = self.metadata[prev_idx].weight;
-                let vruntime_delta = (time_slice * weight) / sum_weights;
+                // Scale by 1024 to match virtual_deadline; prevents truncation to 0
+                // when time_slice is small relative to sum_weights/weight ratio.
+                let vruntime_delta = (time_slice * weight * 1024) / sum_weights;
                 self.metadata[prev_idx].vruntime += vruntime_delta;
             }
         }
@@ -161,19 +164,15 @@ impl EevdfScheduler {
     // Mark the current thread as blocked and prepare a switch to the next runnable thread.
     // Used by sleeping mutexes to yield without spinning.
     pub fn block_current_and_prepare_switch(&mut self, bootstrap_ctx: *mut ThreadContext, current_tick: u64) -> Option<(*mut ThreadContext, *const ThreadContext)> {
-        // Mark current thread blocked before picking the next one.
         if let Some(idx) = self.current {
             self.metadata[idx].blocked = true;
         }
-        // Reuse tick_prepare — it already skips blocked threads and picks fairly.
-        // Force a switch by temporarily clearing the same-thread guard.
-        let saved_last = self.last_switch_tick;
-        self.last_switch_tick = 0;  // make elapsed > MIN_TIME_SLICE to force a switch
-        let result = self.tick_prepare(bootstrap_ctx, current_tick);
-        if result.is_none() {
-            // No runnable threads found; restore last_switch_tick so state is consistent.
-            self.last_switch_tick = saved_last;
-        }
-        result
+        // tick_prepare naturally forces a switch: the current thread is now blocked,
+        // so next_idx will always differ from prev, bypassing the "same thread"
+        // early-return guard.  No last_switch_tick hack needed — using the actual
+        // elapsed time avoids inflating the blocking thread's vruntime, which would
+        // push it past min_vruntime + lag_tolerance and cause the fallback path to
+        // always pick the lowest-indexed non-blocked thread (starvation).
+        self.tick_prepare(bootstrap_ctx, current_tick)
     }
 }

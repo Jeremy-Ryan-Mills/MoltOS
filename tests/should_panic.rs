@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use chronos::{QemuExitCode, exit_qemu, serial_print, serial_println};
+use moltos::{QemuExitCode, exit_qemu, serial_print, serial_println};
 use core::panic::PanicInfo;
 
 #[unsafe(no_mangle)]

@@ -1,14 +1,14 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(chronos::test_runner)]
+#![test_runner(moltos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
-use chronos::allocator::HEAP_SIZE;
+use moltos::allocator::HEAP_SIZE;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -16,11 +16,11 @@ use alloc::vec::Vec;
 entry_point!(main);
 
 fn main(boot_info: &'static BootInfo) -> ! {
-    use chronos::allocator;
-    use chronos::memory::{self, BootInfoFrameAllocator};
+    use moltos::allocator;
+    use moltos::memory::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
 
-    chronos::init();
+    moltos::init();
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
     let mut frame_allocator = unsafe {
@@ -35,7 +35,7 @@ fn main(boot_info: &'static BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    chronos::test_panic_handler(info)
+    moltos::test_panic_handler(info)
 }
 
 
@@ -60,7 +60,7 @@ fn large_vec() {
 
 #[test_case]
 fn many_boxes() {
-    for i in 0..HEAP_SIZE {
+    for i in 0..HEAP_SIZE / core::mem::size_of::<usize>() {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }
@@ -69,7 +69,7 @@ fn many_boxes() {
 #[test_case]
 fn many_boxes_long_lived() {
     let long_lived = Box::new(1);
-    for i in 0..HEAP_SIZE {
+    for i in 0..HEAP_SIZE / core::mem::size_of::<usize>() {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }

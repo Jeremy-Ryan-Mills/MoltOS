@@ -13,7 +13,7 @@ use crate::println;
 use crate::vga_buffer;
 use super::keyboard::ScancodeStream;
 
-const PROMPT: &str = "chronos> ";
+const PROMPT: &str = "moltos> ";
 
 /// Runs the shell loop: prompt, read line, execute command, repeat.
 pub async fn run_shell() {

@@ -5,7 +5,7 @@
 
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
-use chronos::{exit_qemu, init, uptime_ticks, QemuExitCode, test_panic_handler, serial_print, serial_println};
+use moltos::{exit_qemu, init, uptime_ticks, QemuExitCode, test_panic_handler, serial_print, serial_println};
 
 entry_point!(kernel_main);
 

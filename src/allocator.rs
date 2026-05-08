@@ -20,7 +20,7 @@ pub mod linked_list;
 use fixed_size_block::FixedSizeBlockAllocator;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
+pub const HEAP_SIZE: usize = 56 * 1024 * 1024; // 56 MiB
 
 // Spinlock wrapper so allocator types can be used as #[global_allocator].
 // Required because GlobalAlloc impl lives in the allocator submodules.
