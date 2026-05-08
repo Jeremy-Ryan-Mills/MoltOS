@@ -22,6 +22,10 @@ const EXCLUDE: &[&str] = &[
 ];
 
 fn main() {
+    if std::env::var("CARGO_FEATURE_DOOM").is_err() {
+        return;
+    }
+
     let doom_src = PathBuf::from("vendor/doomgeneric/doomgeneric");
 
     let sources: Vec<PathBuf> = std::fs::read_dir(&doom_src)
@@ -48,12 +52,15 @@ fn main() {
         .flag("-fno-builtin")
         .flag("-nostdlib")
         .flag("-m64")
+        // Glibc fortify redirects (e.g. __fread_chk) are introduced at -O1+;
+        // disable since we're freestanding with no libc.
+        .define("_FORTIFY_SOURCE", "0")
         // Mode 13h: 320x200 256-color palette. CMAP256 makes pixel_t = uint8_t
         // so DG_ScreenBuffer holds raw palette indices we can memcpy to 0xA0000.
         .define("DOOMGENERIC_RESX", "320")
         .define("DOOMGENERIC_RESY", "200")
         .define("CMAP256", None)
-        .opt_level(0)
+        .opt_level(1)
         .warnings(false) // doom source has many; suppress noise
         .compile("doom");
 

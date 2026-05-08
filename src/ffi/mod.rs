@@ -129,7 +129,9 @@ pub fn feed_scancode(sc: u8) {
 
     let dk = scancode_to_doom(make, ext);
     if dk != 0 {
-        KEY_RING.lock().push(KeyEvent { pressed: pressed as u8, key: dk });
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            KEY_RING.lock().push(KeyEvent { pressed: pressed as u8, key: dk });
+        });
     }
 }
 
@@ -155,11 +157,13 @@ pub fn doom_thread_entry() -> ! {
         crate::hlt_loop();
     }
 
-    let mut dummy_arg = b"chronos\0".as_ptr() as *mut u8;
+    let mut dummy_arg = b"moltos\0".as_ptr() as *mut u8;
     unsafe {
         doomgeneric_Create(1, &mut dummy_arg);
+        loop {
+            doomgeneric_Tick();
+        }
     }
-    crate::hlt_loop()
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +220,6 @@ pub extern "C" fn DG_DrawFrame() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_SleepMs(_ms: u32) {
-    // TODO: yield the thread for approximately _ms milliseconds.
-    // For now, spin. Replace with a proper sleep once timing is wired up.
     let target = crate::uptime_ticks() + (_ms as u64 / 10).max(1);
     while crate::uptime_ticks() < target {
         x86_64::instructions::hlt();
@@ -232,7 +234,10 @@ pub extern "C" fn DG_GetTicksMs() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_GetKey(pressed: *mut i32, key: *mut u8) -> i32 {
-    match KEY_RING.lock().pop() {
+    let ev = x86_64::instructions::interrupts::without_interrupts(|| {
+        KEY_RING.lock().pop()
+    });
+    match ev {
         Some(ev) => {
             unsafe {
                 *pressed = ev.pressed as i32;

@@ -1,5 +1,5 @@
 [package]
-name = "chronos"
+name = "moltos"
 version = "0.1.0"
 edition = "2024"
 
@@ -52,7 +52,7 @@ harness = false
 # panic = "abort" # disable stack unwinding on panic
 
 [[bin]]
-name = "chronos"
+name = "moltos"
 test = false
 bench = false
 
@@ -83,6 +83,9 @@ default-features = false
 version = "0.3.4"
 default-features = false
 features = ["alloc"]
+
+[features]
+doom = []
 
 [build-dependencies]
 cc = "1.0"

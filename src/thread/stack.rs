@@ -5,6 +5,8 @@ use super::context::ThreadContext;
 pub const STACK_SIZE: usize = 16 * 1024;
 const STACK_ALIGN: usize = 16;
 
+const CANARY: u64 = 0xDEAD_C0DE_DEAD_C0DE;
+
 pub struct KernelStack {
     storage: Box<[u8]>,
 }
@@ -15,7 +17,22 @@ impl KernelStack {
     }
 
     pub fn with_size(size: usize) -> Self {
-        Self { storage: vec![0u8; size].into_boxed_slice() }
+        let mut s = Self { storage: vec![0u8; size].into_boxed_slice() };
+        s.write_canary();
+        s
+    }
+
+    fn write_canary(&mut self) {
+        if self.storage.len() >= 8 {
+            let ptr = self.storage.as_mut_ptr() as *mut u64;
+            unsafe { ptr.write(CANARY); }
+        }
+    }
+
+    pub fn check_canary(&self) -> bool {
+        if self.storage.len() < 8 { return true; }
+        let ptr = self.storage.as_ptr() as *const u64;
+        unsafe { ptr.read() == CANARY }
     }
 
     // Highest address of the stack (stack grows downward), aligned for ABI calls.

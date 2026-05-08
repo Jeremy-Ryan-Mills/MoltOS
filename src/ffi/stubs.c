@@ -14,7 +14,7 @@
 extern void  rust_serial_write(const char *s, size_t len);
 extern void *rust_alloc(size_t size, size_t align);
 extern void *rust_realloc(void *ptr, size_t old_size, size_t align, size_t new_size);
-extern void  rust_dealloc(void *ptr, size_t size, size_t align);
+extern void  rust_free(void *ptr, size_t size, size_t align);
 extern void  rust_hlt(void);
 extern const unsigned char *rust_fs_open(const char *name, size_t *out_size);
 
@@ -24,22 +24,27 @@ extern void *memset(void *dst, int c, size_t n);
 extern size_t strlen(const char *s);
 
 
-/* TODO: size classes for alignment if doom allocates over-aligned types.
- * For now assume 16-byte alignment is always sufficient. */
+/*
+ * Heap header is 16 bytes so that user pointers are always 16-byte aligned.
+ * raw (16-byte aligned) + 16 = user pointer (also 16-byte aligned).
+ * The first 8 bytes of the header hold the user-requested size; the other 8
+ * are padding so the header itself is a full alignment unit.
+ */
+#define MALLOC_HDR 16
 
 void *malloc(size_t size) {
-    if (size == 0) return (void *)1; /* non-NULL for zero-size */
-    void* raw = rust_alloc(size + sizeof(size_t), 16);
-    if (!raw) { return NULL; }
+    if (size == 0) size = 1;
+    void *raw = rust_alloc(size + MALLOC_HDR, 16);
+    if (!raw) return NULL;
     *(size_t *)raw = size;
-    return (char *)raw + sizeof(size_t);
+    return (char *)raw + MALLOC_HDR;
 }
 
 void free(void *ptr) {
     if (!ptr) return;
-    char *raw = (char *)ptr - sizeof(size_t);
+    char *raw = (char *)ptr - MALLOC_HDR;
     size_t size = *(size_t *)raw;
-    rust_free(raw, size + sizeof(size_t), 16);
+    rust_free(raw, size + MALLOC_HDR, 16);
 }
 
 void *calloc(size_t nmemb, size_t size) {
@@ -52,9 +57,10 @@ void *calloc(size_t nmemb, size_t size) {
 void *realloc(void *ptr, size_t new_size) {
     if (!ptr) return malloc(new_size);
     if (!new_size) { free(ptr); return NULL; }
-    size_t old_size = *((size_t *)((char *)ptr - sizeof(size_t)));
+    size_t old_size = *(size_t *)((char *)ptr - MALLOC_HDR);
     void *n = malloc(new_size);
-    if (n) memcpy(n, ptr, old_size < new_size ? old_size : new_size);
+    if (!n) return NULL;
+    memcpy(n, ptr, old_size < new_size ? old_size : new_size);
     free(ptr);
     return n;
 }
@@ -349,11 +355,75 @@ int __vsnprintf_chk(char *buf, size_t maxlen, int flag, size_t buflen, const cha
     return fmt_vsnprintf(buf, maxlen, fmt, ap);
 }
 
+static int vsscanf_impl(const char *str, const char *fmt, va_list ap) {
+    int count = 0;
+    while (*fmt) {
+        if (*fmt == ' ' || *fmt == '\t' || *fmt == '\n') {
+            while (*str == ' ' || *str == '\t' || *str == '\n') str++;
+            fmt++;
+            continue;
+        }
+        if (*fmt != '%') {
+            if (*str == *fmt) { str++; fmt++; }
+            else break;
+            continue;
+        }
+        fmt++;
+        if (*fmt == '%') {
+            if (*str == '%') { str++; }
+            fmt++;
+            continue;
+        }
+        int is_long = 0;
+        if (*fmt == 'l') { is_long = 1; fmt++; if (*fmt == 'l') fmt++; }
+        else if (*fmt == 'h') { fmt++; if (*fmt == 'h') fmt++; }
+        char spec = *fmt++;
+        if (spec != 'c') {
+            while (*str == ' ' || *str == '\t' || *str == '\n') str++;
+        }
+        if (spec == 'c') {
+            char *p = va_arg(ap, char *);
+            if (!*str) break;
+            *p = *str++;
+            count++;
+        } else if (spec == 's') {
+            char *p = va_arg(ap, char *);
+            if (!*str) break;
+            while (*str && *str != ' ' && *str != '\t' && *str != '\n') *p++ = *str++;
+            *p = '\0';
+            count++;
+        } else if (spec == 'd' || spec == 'i' || spec == 'u' ||
+                   spec == 'x' || spec == 'X' || spec == 'o') {
+            int base = (spec == 'x' || spec == 'X') ? 16 : (spec == 'o') ? 8 : 0;
+            if (spec == 'u') base = 10;
+            char *end;
+            long val = strtol(str, &end, base);
+            if (end == str) break;
+            if (is_long) *va_arg(ap, long *) = val;
+            else         *va_arg(ap, int *)  = (int)val;
+            str = end;
+            count++;
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+
+int sscanf(const char *str, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf_impl(str, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
 int __isoc99_sscanf(const char *str, const char *fmt, ...) {
-    /* TODO: doom uses sscanf to parse config values.
-     * Minimal implementation needed for numbers. */
-    (void)str; (void)fmt;
-    return 0;
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf_impl(str, fmt, ap);
+    va_end(ap);
+    return r;
 }
 
 /* DONE: doom only uses these via strcasecmp internally; our strcasecmp

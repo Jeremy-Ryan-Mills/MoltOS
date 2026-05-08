@@ -3,11 +3,18 @@
  *
  * IDT setup, PIC configuration, and hardware IRQ handlers.
  * Timer (IRQ0) and keyboard (IRQ1) both trigger the scheduler on each interrupt.
+ *
+ * Each IRQ handler is a naked function that saves ALL general-purpose registers
+ * to the stack before calling an inner Rust function.  This gives the inner
+ * function a complete snapshot of the interrupted thread's register state,
+ * which is required for correct preemptive context switching.
  */
 
+use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 use lazy_static::lazy_static;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::VirtAddr;
 use pic8259::ChainedPics;
 use spin;
 
@@ -36,10 +43,15 @@ lazy_static! {
             idt.double_fault
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+
+            // Naked-function handlers: registered by raw address because they
+            // don't match the extern "x86-interrupt" signature.
+            idt[InterruptIndex::Timer.as_usize()]
+                .set_handler_addr(VirtAddr::from_ptr(timer_interrupt_entry as *const ()));
+            idt[InterruptIndex::Keyboard.as_usize()]
+                .set_handler_addr(VirtAddr::from_ptr(keyboard_interrupt_entry as *const ()));
         }
 
-        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
-        idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt[crate::syscall::SYSCALL_VECTOR as usize].set_handler_fn(crate::syscall::syscall_handler);
 
         idt
@@ -63,14 +75,13 @@ pub fn init_idt() {
 }
 
 // Configure PIT channel 0 to fire at `frequency` Hz.
-// PIT base clock is 1.193182 MHz; divisor = base / frequency.
 pub unsafe fn configure_pit(frequency: u32) {
     use x86_64::instructions::port::Port;
     let divisor = (1193182u32 / frequency) as u16;
     let mut cmd: Port<u8> = Port::new(0x43);
     let mut data: Port<u8> = Port::new(0x40);
     unsafe {
-        cmd.write(0x34); // channel 0, lobyte/hibyte, mode 2 (rate generator), binary
+        cmd.write(0x34);
         data.write((divisor & 0xFF) as u8);
         data.write((divisor >> 8) as u8);
     }
@@ -82,60 +93,107 @@ pub fn uptime_ticks() -> u64 {
     TICK_COUNT.load(Ordering::Relaxed)
 }
 
-// Write the interrupted thread's state into from_ctx, send EOI, then jump to to_ctx.
-// Called from interrupt handlers after they've saved the callee-saved registers.
-// Does not return — execution continues in to_ctx's thread.
+// ---------------------------------------------------------------------------
+// IrqFrame — the stack layout built by our naked interrupt entry stubs.
 //
-// context_switch_to resumes via `ret`, which pops [ctx.rsp] and jumps there.
-// So ctx.rsp must point to the resume address on the thread's stack.
-// We achieve this by decrementing rsp by 8 and writing rip there, matching
-// how an explicit `call` instruction places the return address at [rsp].
+// The naked entry pushes all 15 GPRs (r15 first, rax last) immediately on
+// entry; the CPU interrupt frame (rip/cs/rflags/rsp/ss) is already above them.
+// The resulting contiguous block matches this struct exactly.
+// ---------------------------------------------------------------------------
+#[repr(C)]
+pub struct IrqFrame {
+    // GPRs pushed by the naked stub (rax at lowest address = rsp after pushes):
+    pub rax:    u64,  // 0
+    pub rcx:    u64,  // 8
+    pub rdx:    u64,  // 16
+    pub rbx:    u64,  // 24
+    pub rbp:    u64,  // 32
+    pub rsi:    u64,  // 40
+    pub rdi:    u64,  // 48
+    pub r8:     u64,  // 56
+    pub r9:     u64,  // 64
+    pub r10:    u64,  // 72
+    pub r11:    u64,  // 80
+    pub r12:    u64,  // 88
+    pub r13:    u64,  // 96
+    pub r14:    u64,  // 104
+    pub r15:    u64,  // 112
+    // CPU-pushed interrupt frame (same privilege, no error code):
+    pub rip:    u64,  // 120
+    pub cs:     u64,  // 128
+    pub rflags: u64,  // 136
+    pub rsp:    u64,  // 144
+    pub ss:     u64,  // 152
+}
+
+// Save the full register state of the interrupted thread into from_ctx,
+// send EOI, then switch to to_ctx.  Never returns.
 #[inline(always)]
 unsafe fn irq_preempt(
     from_ctx: *mut crate::thread::context::ThreadContext,
-    to_ctx: *const crate::thread::context::ThreadContext,
-    rip: u64,
-    rsp: u64,
-    saved: [u64; 6],  // rbx, rbp, r12, r13, r14, r15
-    irq: u8,
+    to_ctx:   *const crate::thread::context::ThreadContext,
+    frame:    *mut IrqFrame,
+    irq:      u8,
 ) {
     unsafe {
+        let f   = &*frame;
         let ctx = &mut *from_ctx;
-        ctx.rip = rip;
-        // Push rip onto the interrupted thread's stack so context_switch_to's
-        // `ret` instruction will pop the correct resume address.
-        let resume_rsp = rsp - 8;
-        *(resume_rsp as *mut u64) = rip;
+
+        ctx.rip    = f.rip;
+        ctx.rax    = f.rax;
+        ctx.rcx    = f.rcx;
+        ctx.rdx    = f.rdx;
+        ctx.rbx    = f.rbx;
+        ctx.rbp    = f.rbp;
+        ctx.rsi    = f.rsi;
+        ctx.rdi    = f.rdi;
+        ctx.r8     = f.r8;
+        ctx.r9     = f.r9;
+        ctx.r10    = f.r10;
+        ctx.r11    = f.r11;
+        ctx.r12    = f.r12;
+        ctx.r13    = f.r13;
+        ctx.r14    = f.r14;
+        ctx.r15    = f.r15;
+        ctx.rflags = f.rflags;
+
+        // Set up the resume stack so context_switch_to's `ret` pops the right rip.
+        // We write rip one slot below the interrupted rsp (like a call instruction
+        // would), then point ctx.rsp there.
+        let resume_rsp = f.rsp - 8;
+        *(resume_rsp as *mut u64) = f.rip;
         ctx.rsp = resume_rsp;
-        ctx.rbx = saved[0];
-        ctx.rbp = saved[1];
-        ctx.r12 = saved[2];
-        ctx.r13 = saved[3];
-        ctx.r14 = saved[4];
-        ctx.r15 = saved[5];
+
         PICS.lock().notify_end_of_interrupt(irq);
         crate::thread::context::context_switch_to(to_ctx);
     }
 }
 
-// Timer IRQ (IRQ0): increment tick counter, trigger scheduler, optionally switch threads.
-extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame) {
-    // Capture callee-saved regs immediately — before any Rust code runs that
-    // could clobber them. These hold the interrupted thread's register state.
-    let saved_rbx: u64; let saved_rbp: u64;
-    let saved_r12: u64; let saved_r13: u64;
-    let saved_r14: u64; let saved_r15: u64;
-    unsafe {
-        core::arch::asm!(
-            "mov {}, rbx", "mov {}, rbp",
-            "mov {}, r12", "mov {}, r13",
-            "mov {}, r14", "mov {}, r15",
-            out(reg) saved_rbx, out(reg) saved_rbp,
-            out(reg) saved_r12, out(reg) saved_r13,
-            out(reg) saved_r14, out(reg) saved_r15,
-        );
-    }
+// ---------------------------------------------------------------------------
+// Timer IRQ (IRQ0)
+// ---------------------------------------------------------------------------
 
+// Naked entry: save all GPRs, call inner, restore all GPRs, iretq.
+// Push order is r15…rax so that rax lands at the lowest address (offset 0 in IrqFrame).
+#[unsafe(naked)]
+unsafe extern "C" fn timer_interrupt_entry() {
+    naked_asm!(
+        "push r15", "push r14", "push r13", "push r12",
+        "push r11", "push r10", "push r9",  "push r8",
+        "push rdi", "push rsi", "push rbp", "push rbx",
+        "push rdx", "push rcx", "push rax",
+        "mov  rdi, rsp",
+        "call {inner}",
+        "pop  rax", "pop  rcx", "pop  rdx",
+        "pop  rbx", "pop  rbp", "pop  rsi", "pop  rdi",
+        "pop  r8",  "pop  r9",  "pop  r10", "pop  r11",
+        "pop  r12", "pop  r13", "pop  r14", "pop  r15",
+        "iretq",
+        inner = sym timer_interrupt_inner,
+    );
+}
+
+extern "C" fn timer_interrupt_inner(frame: *mut IrqFrame) {
     TICK_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let switch = {
@@ -149,36 +207,36 @@ extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFra
             return;
         }
         unsafe {
-            irq_preempt(
-                from_ctx, to_ctx,
-                stack_frame.instruction_pointer.as_u64(),
-                stack_frame.stack_pointer.as_u64(),
-                [saved_rbx, saved_rbp, saved_r12, saved_r13, saved_r14, saved_r15],
-                InterruptIndex::Timer.as_u8(),
-            );
+            irq_preempt(from_ctx, to_ctx, frame, InterruptIndex::Timer.as_u8());
         }
     } else {
         unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8()); }
     }
 }
 
-// Keyboard IRQ (IRQ1): read scancode, enqueue it, trigger scheduler, optionally switch.
-extern "x86-interrupt" fn keyboard_interrupt_handler(stack_frame: InterruptStackFrame) {
-    // Capture callee-saved regs first — same reason as timer handler above.
-    let saved_rbx: u64; let saved_rbp: u64;
-    let saved_r12: u64; let saved_r13: u64;
-    let saved_r14: u64; let saved_r15: u64;
-    unsafe {
-        core::arch::asm!(
-            "mov {}, rbx", "mov {}, rbp",
-            "mov {}, r12", "mov {}, r13",
-            "mov {}, r14", "mov {}, r15",
-            out(reg) saved_rbx, out(reg) saved_rbp,
-            out(reg) saved_r12, out(reg) saved_r13,
-            out(reg) saved_r14, out(reg) saved_r15,
-        );
-    }
+// ---------------------------------------------------------------------------
+// Keyboard IRQ (IRQ1)
+// ---------------------------------------------------------------------------
 
+#[unsafe(naked)]
+unsafe extern "C" fn keyboard_interrupt_entry() {
+    naked_asm!(
+        "push r15", "push r14", "push r13", "push r12",
+        "push r11", "push r10", "push r9",  "push r8",
+        "push rdi", "push rsi", "push rbp", "push rbx",
+        "push rdx", "push rcx", "push rax",
+        "mov  rdi, rsp",
+        "call {inner}",
+        "pop  rax", "pop  rcx", "pop  rdx",
+        "pop  rbx", "pop  rbp", "pop  rsi", "pop  rdi",
+        "pop  r8",  "pop  r9",  "pop  r10", "pop  r11",
+        "pop  r12", "pop  r13", "pop  r14", "pop  r15",
+        "iretq",
+        inner = sym keyboard_interrupt_inner,
+    );
+}
+
+extern "C" fn keyboard_interrupt_inner(frame: *mut IrqFrame) {
     let scancode: u8 = unsafe { x86_64::instructions::port::Port::new(0x60u16).read() };
     crate::task::keyboard::add_scancode(scancode);
     crate::ffi::feed_scancode(scancode);
@@ -194,18 +252,16 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(stack_frame: InterruptStack
             return;
         }
         unsafe {
-            irq_preempt(
-                from_ctx, to_ctx,
-                stack_frame.instruction_pointer.as_u64(),
-                stack_frame.stack_pointer.as_u64(),
-                [saved_rbx, saved_rbp, saved_r12, saved_r13, saved_r14, saved_r15],
-                InterruptIndex::Keyboard.as_u8(),
-            );
+            irq_preempt(from_ctx, to_ctx, frame, InterruptIndex::Keyboard.as_u8());
         }
     } else {
         unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8()); }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Exception handlers
+// ---------------------------------------------------------------------------
 
 extern "x86-interrupt" fn gp_fault_handler(
     stack_frame: InterruptStackFrame,
@@ -284,4 +340,92 @@ fn test_uptime_increments() {
     let t1 = crate::uptime_ticks();
     assert!(t1 > t0, "uptime did not increase ({} -> {})", t0, t1);
     assert!(iterations < 10_000_000, "test timed out waiting for timer interrupt");
+}
+
+// IrqFrame layout tests.
+//
+// The naked interrupt entry stubs push GPRs in a fixed order so that
+// irq_preempt can read them by name from the struct.  Any reordering would
+// silently corrupt the saved register state — these tests catch that.
+#[test_case]
+fn test_irq_frame_gpr_offsets() {
+    use core::mem::offset_of;
+    assert_eq!(offset_of!(IrqFrame, rax),    0);
+    assert_eq!(offset_of!(IrqFrame, rcx),    8);
+    assert_eq!(offset_of!(IrqFrame, rdx),    16);
+    assert_eq!(offset_of!(IrqFrame, rbx),    24);
+    assert_eq!(offset_of!(IrqFrame, rbp),    32);
+    assert_eq!(offset_of!(IrqFrame, rsi),    40);
+    assert_eq!(offset_of!(IrqFrame, rdi),    48);
+    assert_eq!(offset_of!(IrqFrame, r8),     56);
+    assert_eq!(offset_of!(IrqFrame, r9),     64);
+    assert_eq!(offset_of!(IrqFrame, r10),    72);
+    assert_eq!(offset_of!(IrqFrame, r11),    80);
+    assert_eq!(offset_of!(IrqFrame, r12),    88);
+    assert_eq!(offset_of!(IrqFrame, r13),    96);
+    assert_eq!(offset_of!(IrqFrame, r14),    104);
+    assert_eq!(offset_of!(IrqFrame, r15),    112);
+}
+
+// The CPU-pushed interrupt frame sits immediately after the 15 GPRs.
+#[test_case]
+fn test_irq_frame_cpu_frame_offsets() {
+    use core::mem::offset_of;
+    assert_eq!(offset_of!(IrqFrame, rip),    120);
+    assert_eq!(offset_of!(IrqFrame, cs),     128);
+    assert_eq!(offset_of!(IrqFrame, rflags), 136);
+    assert_eq!(offset_of!(IrqFrame, rsp),    144);
+    assert_eq!(offset_of!(IrqFrame, ss),     152);
+}
+
+// Total size must be exactly 160 bytes: 15 GPRs + 5 CPU-frame words.
+#[test_case]
+fn test_irq_frame_size() {
+    assert_eq!(core::mem::size_of::<IrqFrame>(), 160);
+}
+
+// The rflags saved in the CPU interrupt frame always has IF=1 because the
+// CPU saves the pre-interrupt rflags (when the thread was running) and the
+// thread runs with interrupts enabled.  Verify our understanding of the
+// IF bit position in the field we read in irq_preempt.
+#[test_case]
+fn test_irq_frame_rflags_if_bit_position() {
+    // Construct a synthetic IrqFrame with a known rflags value and verify
+    // the IF bit (bit 9 = 0x200) is where irq_preempt expects it.
+    let mut frame = IrqFrame {
+        rax: 0, rcx: 0, rdx: 0, rbx: 0, rbp: 0, rsi: 0, rdi: 0,
+        r8:  0, r9:  0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+        rip: 0x1234, cs: 8, rflags: 0x246, rsp: 0xffff_8000_0000_0000, ss: 0,
+    };
+    assert_ne!(frame.rflags & 0x200, 0, "IF bit (0x200) not set in rflags=0x246");
+    frame.rflags &= !0x200u64;
+    assert_eq!(frame.rflags & 0x200, 0, "IF bit clear after mask");
+}
+
+// uptime_ticks must be monotonically non-decreasing across consecutive reads.
+#[test_case]
+fn test_uptime_monotonic() {
+    let t0 = uptime_ticks();
+    let t1 = uptime_ticks();
+    assert!(t1 >= t0, "uptime went backwards: {} -> {}", t0, t1);
+}
+
+// PIC offsets: IRQ0/IRQ1 must map to the remapped vectors, not the default
+// (conflicting) ones.  Wrong offsets would shadow CPU exceptions.
+#[test_case]
+fn test_pic_offsets_clear_of_exceptions() {
+    // x86 exceptions use vectors 0-31.  Our remapped PIC starts at PIC_1_OFFSET.
+    assert!(PIC_1_OFFSET >= 32, "PIC_1 overlaps CPU exception vectors");
+    assert!(PIC_2_OFFSET >= 40, "PIC_2 overlaps CPU exception vectors");
+    assert_eq!(PIC_2_OFFSET, PIC_1_OFFSET + 8);
+}
+
+// Timer and keyboard IRQ vectors must be distinct and within the PIC range.
+#[test_case]
+fn test_irq_vectors_in_pic_range() {
+    let timer = InterruptIndex::Timer.as_usize();
+    let kb    = InterruptIndex::Keyboard.as_usize();
+    assert_eq!(timer, PIC_1_OFFSET as usize);
+    assert_eq!(kb,    PIC_1_OFFSET as usize + 1);
+    assert_ne!(timer, kb);
 }

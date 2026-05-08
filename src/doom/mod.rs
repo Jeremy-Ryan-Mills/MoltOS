@@ -35,7 +35,7 @@ pub fn doom_thread_entry() -> ! {
     // vga_mode13::init() was already called before spawning this thread;
     // see kernel_main. If not, call it here instead.
 
-    let mut dummy_arg = b"chronos\0".as_ptr() as *mut u8;
+    let mut dummy_arg = b"moltos\0".as_ptr() as *mut u8;
     unsafe {
         doomgeneric_Create(1, &mut dummy_arg);
     }
