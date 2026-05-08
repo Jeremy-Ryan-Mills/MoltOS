@@ -17,9 +17,9 @@ extern crate alloc;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU32, Ordering};
-use chronos::sync::KMutex;
-use chronos::thread::{Thread, SCHEDULER};
-use chronos::{exit_qemu, QemuExitCode};
+use moltos::sync::KMutex;
+use moltos::thread::{Thread, SCHEDULER};
+use moltos::{exit_qemu, QemuExitCode};
 
 entry_point!(main);
 
@@ -48,10 +48,10 @@ fn verifier() {
     let final_count = *COUNTER.lock();
     let expected = WORKERS * ITERS;
     if final_count == expected {
-        chronos::serial_println!("kmutex_concurrent: counter={} [ok]", final_count);
+        moltos::serial_println!("kmutex_concurrent: counter={} [ok]", final_count);
         exit_qemu(QemuExitCode::Success);
     } else {
-        chronos::serial_println!(
+        moltos::serial_println!(
             "kmutex_concurrent: FAILED counter={} expected={}",
             final_count, expected
         );
@@ -61,11 +61,11 @@ fn verifier() {
 }
 
 fn main(boot_info: &'static BootInfo) -> ! {
-    use chronos::allocator;
-    use chronos::memory::{self, BootInfoFrameAllocator};
+    use moltos::allocator;
+    use moltos::memory::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
 
-    chronos::init();
+    moltos::init();
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
     let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
@@ -80,10 +80,10 @@ fn main(boot_info: &'static BootInfo) -> ! {
         sched.spawn(Thread::new(verifier));
     }
 
-    chronos::thread::enter_scheduler();
+    moltos::thread::enter_scheduler();
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    chronos::test_panic_handler(info)
+    moltos::test_panic_handler(info)
 }

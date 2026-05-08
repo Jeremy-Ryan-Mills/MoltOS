@@ -3,25 +3,25 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(chronos::test_runner)]
+#![test_runner(moltos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
-use chronos::test_panic_handler;
-use chronos::thread::schedulers::round_robin::RoundRobinScheduler;
-use chronos::thread::{Thread, context::ThreadContext};
+use moltos::test_panic_handler;
+use moltos::thread::schedulers::round_robin::RoundRobinScheduler;
+use moltos::thread::{Thread, context::ThreadContext};
 
 entry_point!(main);
 
 fn main(boot_info: &'static BootInfo) -> ! {
-    use chronos::allocator;
-    use chronos::memory::{self, BootInfoFrameAllocator};
+    use moltos::allocator;
+    use moltos::memory::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
 
-    chronos::init();
+    moltos::init();
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
     let mut frame_allocator = unsafe {
@@ -36,12 +36,12 @@ fn main(boot_info: &'static BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    chronos::test_panic_handler(info)
+    moltos::test_panic_handler(info)
 }
 
 #[test_case]
 fn test_round_robin_sequential() {
-    chronos::serial_print!("scheduler_round_robin::test_round_robin_sequential...\t");
+    moltos::serial_print!("scheduler_round_robin::test_round_robin_sequential...\t");
     fn dummy_entry() {
         loop {}
     }
@@ -77,24 +77,24 @@ fn test_round_robin_sequential() {
     let result4 = sched.tick_prepare(bootstrap_ptr, 3);
     assert!(result4.is_some());
     
-    chronos::serial_println!("[ok]");
+    moltos::serial_println!("[ok]");
 }
 
 #[test_case]
 fn test_round_robin_empty() {
-    chronos::serial_print!("scheduler_round_robin::test_round_robin_empty...\t");
+    moltos::serial_print!("scheduler_round_robin::test_round_robin_empty...\t");
     let mut sched = RoundRobinScheduler::new();
     let mut bootstrap_ctx = ThreadContext::default();
     let bootstrap_ptr = &mut bootstrap_ctx as *mut ThreadContext;
     
     let result = sched.tick_prepare(bootstrap_ptr, 0);
     assert!(result.is_none());
-    chronos::serial_println!("[ok]");
+    moltos::serial_println!("[ok]");
 }
 
 #[test_case]
 fn test_round_robin_single_thread() {
-    chronos::serial_print!("scheduler_round_robin::test_round_robin_single_thread...\t");
+    moltos::serial_print!("scheduler_round_robin::test_round_robin_single_thread...\t");
     fn dummy_entry() {
         loop {}
     }
@@ -111,5 +111,5 @@ fn test_round_robin_single_thread() {
     let result2 = sched.tick_prepare(bootstrap_ptr, 1);
     assert!(result2.is_some());
     
-    chronos::serial_println!("[ok]");
+    moltos::serial_println!("[ok]");
 }
