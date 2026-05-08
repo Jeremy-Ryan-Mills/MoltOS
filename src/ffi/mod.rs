@@ -157,6 +157,9 @@ pub fn doom_thread_entry() -> ! {
         crate::hlt_loop();
     }
 
+    // Switch to graphics mode now — text output disappears from this point on.
+    crate::vga_mode13::enter_mode13();
+
     let mut dummy_arg = b"moltos\0".as_ptr() as *mut u8;
     unsafe {
         doomgeneric_Create(1, &mut dummy_arg);

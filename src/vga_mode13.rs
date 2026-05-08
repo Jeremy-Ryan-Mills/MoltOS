@@ -38,13 +38,19 @@ unsafe fn write_indexed(index_port: u16, data_port: u16, regs: &[(u8, u8)]) {
     }
 }
 
+/// Map the VGA framebuffer pages into virtual memory. Call this at boot while
+/// the mapper is available. Does not switch the display to graphics mode.
 pub fn init(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
     map_framebuffer(mapper, frame_allocator);
+}
+
+/// Switch the display to VGA mode 13h. Call this immediately before starting
+/// the Doom engine — this is when text output stops being visible.
+pub fn enter_mode13() {
     set_mode();
-    // Clear framebuffer to black so the screen doesn't show garbage before Doom draws.
     framebuffer().fill(0);
 }
 

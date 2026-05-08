@@ -12,6 +12,11 @@ use crate::print;
 use crate::println;
 use crate::vga_buffer;
 use super::keyboard::ScancodeStream;
+#[cfg(feature = "doom")]
+use core::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(feature = "doom")]
+static DOOM_LAUNCHED: AtomicBool = AtomicBool::new(false);
 
 const PROMPT: &str = "moltos> ";
 
@@ -78,6 +83,8 @@ fn run_command(line: &str) {
         "uptime" => cmd_uptime(),
         "mem" | "memory" => cmd_mem(),
         "syscall" => cmd_syscall(rest.trim()),
+        #[cfg(feature = "doom")]
+        "doom" => cmd_doom(),
         _ => println!("unknown command: '{}'. Type 'help' for commands.", cmd),
     }
 }
@@ -89,6 +96,8 @@ fn cmd_help() {
     println!("  uptime     - show uptime in timer ticks");
     println!("  mem/memory - dump memory map");
     println!("  syscall    - test syscalls (uptime, putchar)");
+    #[cfg(feature = "doom")]
+    println!("  doom       - launch Doom (requires doom1.wad)");
 }
 
 fn cmd_uptime() {
@@ -127,4 +136,17 @@ fn cmd_syscall(args: &str) {
         }
         _ => println!("unknown syscall test: '{}'. Use uptime or putchar.", sub),
     }
+}
+
+#[cfg(feature = "doom")]
+fn cmd_doom() {
+    if DOOM_LAUNCHED.swap(true, Ordering::SeqCst) {
+        println!("doom: already running");
+        return;
+    }
+    println!("launching doom...");
+    fn doom_entry() { crate::ffi::doom_thread_entry(); }
+    crate::thread::SCHEDULER.lock().spawn(
+        crate::thread::Thread::with_stack_size(doom_entry, 24 * 1024 * 1024)
+    );
 }
