@@ -3,4 +3,4 @@
 	url = https://github.com/ozkl/doomgeneric
 [submodule "vendor/doomgeneric"]
 	path = vendor/doomgeneric
-	url = git@github-personal:Jeremy-Ryan-Mills/doomgeneric.git
+	url = https://github.com/Jeremy-Ryan-Mills/doomgeneric.git
