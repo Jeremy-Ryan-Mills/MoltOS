@@ -1,4 +1,4 @@
-# Chronos OS
+# MoltOS
 
 ![Moltos logo](images/logo.png)
 
