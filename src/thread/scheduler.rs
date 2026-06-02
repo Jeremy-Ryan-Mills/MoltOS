@@ -1,15 +1,3 @@
-/***
- * src/thread/scheduler.rs
- *
- * Global scheduler. Wraps EevdfScheduler and owns the bootstrap context —
- * the saved register state of kernel_main used as the "from" slot on the
- * first context switch.
- *
- * SCHEDULER is an IrqMutex so every access automatically disables interrupts.
- * This prevents the single-core deadlock where a thread holds the lock, gets
- * timer-interrupted, and the handler spins on it forever.
- */
-
 use crate::sync::IrqMutex;
 use super::context::ThreadContext;
 use super::schedulers::eevdf::EevdfScheduler;

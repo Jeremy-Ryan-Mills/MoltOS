@@ -1,9 +1,3 @@
-/***
- * src/memory.rs
- *
- * Page table setup, physical frame allocator, and VGA buffer mapping.
- */
-
 use conquer_once::spin::OnceCell;
 use x86_64::{
     structures::paging::{

@@ -1,21 +1,8 @@
-/***
- * src/sync.rs
- *
- * Kernel synchronization primitives.
- *
- * IrqMutex<T>: a spin::Mutex wrapper that saves/restores the interrupt flag on
- * every lock/unlock. Use this for any lock that the timer interrupt handler also
- * acquires (e.g. SCHEDULER) — prevents the classic single-core deadlock where a
- * thread holds the lock, gets timer-interrupted, and the handler spins forever.
- *
- * KMutex<T>: a sleeping mutex that blocks the calling thread via the scheduler
- * instead of spinning. Backed by IrqMutex internally. Use for any shared state
- * accessed from kernel threads where contention is expected to last more than a
- * few instructions.
- *
- * Not safe to call KMutex::lock() from interrupt handlers or from bootstrap
- * context before enter_scheduler() (it falls back to spinning in that case).
- */
+// IrqMutex: disables interrupts on lock to prevent deadlock when the timer handler
+// also acquires the same lock (e.g. SCHEDULER).
+//
+// KMutex: sleeping mutex — blocks the thread via the scheduler instead of spinning.
+// Not safe to call from interrupt handlers or before enter_scheduler().
 
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;

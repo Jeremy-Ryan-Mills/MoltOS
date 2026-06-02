@@ -1,11 +1,3 @@
-/***
- * src/thread/schedulers/eevdf.rs
- *
- * EEVDF (Earliest Eligible Virtual Deadline First) scheduler.
- * Each thread gets CPU time proportional to its weight. Lower virtual deadline
- * = higher priority to run next.
- */
-
 use alloc::vec::Vec;
 use super::super::context::ThreadContext;
 use super::super::thread::{Thread, ThreadId};

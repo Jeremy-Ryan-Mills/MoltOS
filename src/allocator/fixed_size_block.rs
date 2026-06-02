@@ -1,12 +1,3 @@
-/***
- * src/allocator/fixed_size_block.rs
- *
- * Fixed-size block allocator with a linked-list fallback.
- * Maintains one free-list per block size class (BLOCK_SIZES). Allocations from
- * a matching size class are O(1). Larger allocations fall through to a
- * general-purpose heap (linked_list_allocator::Heap).
- */
-
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::{mem, ptr};
 use core::ptr::NonNull;

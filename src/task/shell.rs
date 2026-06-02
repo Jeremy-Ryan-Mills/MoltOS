@@ -1,8 +1,3 @@
-//! Simple terminal / command loop.
-//!
-//! Reads keyboard input line-by-line, parses the first token as a command,
-//! and runs built-in commands (help, clear, echo, uptime, mem, syscall).
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use futures_util::StreamExt;
@@ -20,7 +15,6 @@ static DOOM_LAUNCHED: AtomicBool = AtomicBool::new(false);
 
 const PROMPT: &str = "moltos> ";
 
-/// Runs the shell loop: prompt, read line, execute command, repeat.
 pub async fn run_shell() {
     let mut scancodes = ScancodeStream::new();
     let mut keyboard = Keyboard::new(

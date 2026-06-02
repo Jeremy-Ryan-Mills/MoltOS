@@ -1,10 +1,3 @@
-/***
- * src/lib.rs
- *
- * Kernel crate root. Wires up GDT, IDT, PIC, and output subsystems.
- * Also provides the custom test framework used by cargo test in QEMU.
- */
-
 #![no_std]
 #![cfg_attr(test, no_main)]
 #![feature(custom_test_frameworks)]

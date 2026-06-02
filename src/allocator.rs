@@ -1,11 +1,3 @@
-/***
- * src/allocator.rs
- *
- * Heap initialization and global allocator.
- * Uses FixedSizeBlockAllocator wrapped in a spinlock.
- * bump.rs and linked_list.rs are kept as alternate implementations.
- */
-
 use x86_64::{
     structures::paging::{
         mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
@@ -22,8 +14,6 @@ use fixed_size_block::FixedSizeBlockAllocator;
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 56 * 1024 * 1024; // 56 MiB
 
-// Spinlock wrapper so allocator types can be used as #[global_allocator].
-// Required because GlobalAlloc impl lives in the allocator submodules.
 pub struct Locked<A> {
     inner: spin::Mutex<A>,
 }
@@ -41,7 +31,6 @@ impl<A> Locked<A> {
 #[global_allocator]
 static ALLOCATOR: Locked<FixedSizeBlockAllocator> = Locked::new(FixedSizeBlockAllocator::new());
 
-// Map the heap region and initialize the global allocator.
 // Must be called once during early boot before using Box, Vec, etc.
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,

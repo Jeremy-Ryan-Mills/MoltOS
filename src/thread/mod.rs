@@ -1,9 +1,3 @@
-/***
- * src/thread/mod.rs
- *
- * Preemptive kernel threads. Timer interrupts switch threads via context_switch.
- */
-
 pub mod context;
 pub mod scheduler;
 pub mod schedulers;

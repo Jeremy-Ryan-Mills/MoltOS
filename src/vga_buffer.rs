@@ -1,10 +1,3 @@
-/***
- * src/vga_buffer.rs
- *
- * VGA text-mode driver. 80x25 characters at 0xb8000.
- * Supports colored output, line wrapping, scrolling, and backspace.
- */
-
 use core::fmt;
 use lazy_static::lazy_static;
 use spin::Mutex;

@@ -1,10 +1,3 @@
-/***
- * src/main.rs
- *
- * Kernel entry point. Initializes memory, heap, scheduler, and spawns the
- * async executor thread before entering the scheduler.
- */
-
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]

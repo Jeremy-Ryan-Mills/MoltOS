@@ -1,20 +1,6 @@
-/***
- * src/fs.rs
- *
- * CXFS: minimal flat archive filesystem.
- *
- * Format:
- *   [0..4]   magic  "CXFS"
- *   [4..8]   u32 LE file count N
- *   [8..]    N * 40-byte entries
- *     [+0..+32]  filename, null-terminated, zero-padded
- *     [+32..+36] u32 LE data offset from archive start
- *     [+36..+40] u32 LE data size in bytes
- *   [8 + N*40 ..] packed file data
- *
- * The archive is loaded from the ATA slave at boot and kept in a heap Vec.
- * After init(), open() returns a &'static [u8] into that buffer.
- */
+// CXFS flat archive: magic "CXFS", u32 LE count, N*40-byte entries
+// (32-byte name, u32 offset, u32 size), then packed file data.
+// Loaded from ATA slave at boot; open() returns a &'static [u8] into the buffer.
 
 extern crate alloc;
 use alloc::vec::Vec;

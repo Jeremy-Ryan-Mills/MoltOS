@@ -1,15 +1,3 @@
-/***
- * src/doom/mod.rs
- *
- * FFI boundary between the Rust kernel and the doomgeneric C engine.
- *
- * C → Rust: doomgeneric calls the DG_* callbacks defined here.
- * Rust → C: kernel calls doomgeneric_Create / doomgeneric_Tick.
- *
- * To run Doom, spawn doom_thread_entry as a kernel thread after calling
- * vga_mode13::init() and fs::init().
- */
-
 use crate::vga_mode13;
 use alloc::alloc::{Layout, alloc, dealloc};
 

@@ -1,15 +1,3 @@
-/***
- * src/interrupts.rs
- *
- * IDT setup, PIC configuration, and hardware IRQ handlers.
- * Timer (IRQ0) and keyboard (IRQ1) both trigger the scheduler on each interrupt.
- *
- * Each IRQ handler is a naked function that saves ALL general-purpose registers
- * to the stack before calling an inner Rust function.  This gives the inner
- * function a complete snapshot of the interrupted thread's register state,
- * which is required for correct preemptive context switching.
- */
-
 use core::arch::naked_asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 use lazy_static::lazy_static;

@@ -1,11 +1,3 @@
-/***
- * src/gdt.rs
- *
- * GDT and TSS setup. In long mode the GDT is mostly vestigial, but we still
- * need it to load a TSS for the Interrupt Stack Table (IST) entries used by
- * the double-fault handler.
- */
-
 use lazy_static::lazy_static;
 use x86_64::VirtAddr;
 use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};

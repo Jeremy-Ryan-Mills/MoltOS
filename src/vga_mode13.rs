@@ -1,11 +1,3 @@
-/***
- * src/vga_mode13.rs
- *
- * VGA mode 13h: 320x200 256-color linear framebuffer at 0xA0000.
- * Programs all VGA register banks directly; no BIOS required.
- * Calling init() switches the display away from text mode permanently.
- */
-
 use x86_64::{
     instructions::port::Port,
     structures::paging::{

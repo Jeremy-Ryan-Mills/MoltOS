@@ -1,11 +1,3 @@
-/***
- * src/ata.rs
- *
- * ATA PIO driver for the primary IDE channel.
- * Supports LBA28 sector reads from master or slave.
- * Intended for bulk boot-time loads; not optimized for runtime throughput.
- */
-
 use x86_64::instructions::port::Port;
 
 const BASE:  u16 = 0x1F0; // primary channel data/register base
